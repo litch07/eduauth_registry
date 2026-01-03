@@ -1,0 +1,403 @@
+// EduAuth Registry Prisma schema (MySQL)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// User roles enum
+enum UserRole {
+  STUDENT
+  INSTITUTION
+  ADMIN
+}
+
+// User status enum
+enum UserStatus {
+  PENDING_VERIFICATION
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+// Identity type enum
+enum IdentityType {
+  NID
+  BIRTH_CERTIFICATE
+}
+
+// Institution type enum
+enum InstitutionType {
+  HIGH_SCHOOL
+  COLLEGE
+  TECHNICAL
+  MADRASAH
+  UNIVERSITY
+  TRAINING_CENTRE
+}
+
+// Board enum
+enum Board {
+  COMILLA
+  DHAKA
+  DINAJPUR
+  JESSORE
+  MYMENSINGH
+  RAJSHAHI
+  SYLHET
+  MADRASAH
+  TECHNICAL
+}
+
+// Certificate type enum
+enum CertificateType {
+  // High School
+  JSC
+  SSC
+  VOCATIONAL_SSC
+
+  // College
+  HSC
+  VOCATIONAL_HSC
+  BM
+
+  // Madrasah
+  JDC
+  DAKHIL
+  ALIM
+  VOCATIONAL_MADRASAH
+
+  // Technical
+  DIPLOMA
+
+  // University
+  BSC
+  MSC
+  BA
+  MA
+  BBA
+  MBA
+  LLB
+  LLM
+  MBBS
+  BDS
+
+  // Training
+  TRAINING_COMPLETION
+
+  // Skill
+  SKILL_CERTIFICATE
+}
+
+// Main User table (authentication)
+model User {
+  id                String     @id @default(uuid())
+  email             String     @unique
+  password          String
+  role              UserRole
+  status            UserStatus @default(PENDING_VERIFICATION)
+  emailVerified     Boolean    @default(false)
+  emailVerifyToken  String?    @unique
+  emailVerifyExpiry DateTime?
+  resetToken        String?    @unique
+  resetTokenExpiry  DateTime?
+  createdAt         DateTime   @default(now())
+  updatedAt         DateTime   @updatedAt
+
+  student           Student?
+  institution       Institution?
+}
+
+// Student profile
+model Student {
+  id                  String       @id @default(uuid())
+  userId              String       @unique
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  firstName           String
+  middleName          String?
+  lastName            String
+  dateOfBirth         DateTime
+  fatherName          String
+  motherName          String
+
+  identityType        IdentityType
+  nidEncrypted        String?
+  birthCertEncrypted  String?
+
+  phone               String
+  presentAddress      String
+
+  nidOrBirthCertImage String
+  studentPhoto        String
+
+  studentId           String       @unique @default(uuid())
+  rejectionReason     String?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  enrollments           Enrollment[]
+  enrollmentRequests    EnrollmentRequest[]
+  certificates          Certificate[]
+  profileChangeRequests ProfileChangeRequest[]
+  issueReports          IssueReport[]
+}
+
+// Institution profile
+model Institution {
+  id                   String            @id @default(uuid())
+  userId               String            @unique
+  user                 User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name                 String
+  type                 InstitutionType
+  phone                String
+  address              String
+
+  eiin                 String?           @unique
+  registrationNumber   String?           @unique
+  board                Board?
+
+  authorityName        String
+  authorityTitle       String
+  authoritySignature   String
+
+  canIssueCertificates Boolean           @default(true)
+  rejectionReason      String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  enrollments         Enrollment[]
+  enrollmentRequests  EnrollmentRequest[]
+  certificates        Certificate[]
+  programs            InstitutionProgram[]
+  programRequests     ProgramRequest[]
+  activityLogs        ActivityLog[]
+}
+
+// Enrollment (institution claims a student)
+model Enrollment {
+  id                   String      @id @default(uuid())
+  studentId            String
+  student              Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  institutionId        String
+  institution          Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  studentInstitutionId String
+  enrollmentDate       DateTime
+
+  department           String?
+  class                String?
+  courseName           String?
+
+  createdAt            DateTime    @default(now())
+
+  @@unique([studentId, institutionId])
+}
+
+// Enrollment requests (student-initiated)
+model EnrollmentRequest {
+  id                   String      @id @default(uuid())
+  studentId            String
+  student              Student     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  institutionId        String
+  institution          Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  studentInstitutionId String
+  enrollmentDate       DateTime
+
+  department           String?
+  class                String?
+  courseName           String?
+
+  supportingDocs       String?     @db.Text
+
+  status               String      @default("PENDING")
+  institutionComments  String?     @db.Text
+  decidedAt            DateTime?
+  decidedBy            String?
+
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  @@unique([studentId, institutionId, status])
+}
+
+// Certificate sequence
+model CertificateSequence {
+  id           Int      @id @default(autoincrement())
+  lastSequence BigInt   @default(0) @db.BigInt
+  updatedAt    DateTime @updatedAt
+}
+
+// Certificate
+model Certificate {
+  id                  String          @id @default(uuid())
+
+  serial              String          @unique
+  sequenceNumber      BigInt          @db.BigInt
+  certificateType     CertificateType
+
+  studentId           String
+  student             Student         @relation(fields: [studentId], references: [id])
+  institutionId       String
+  institution         Institution     @relation(fields: [institutionId], references: [id])
+
+  rollNumber          String?
+  registrationNumber  String?
+  examinationYear     Int?
+  board               Board?
+  group               String?
+  gpa                 Decimal?        @db.Decimal(3, 2)
+  passingYear         Int?
+
+  diplomaSubject      String?
+  duration            String?
+  session             String?
+
+  program             String?
+  department          String?
+  major               String?
+  cgpa                Decimal?        @db.Decimal(3, 2)
+  degreeClass         String?
+  convocationDate     DateTime?
+
+  completionDate      DateTime?
+
+  skillName           String?
+
+  issueDate           DateTime        @default(now())
+  authorityName       String
+  authorityTitle      String
+  authoritySignature  String
+
+  isPubliclyShareable Boolean         @default(true)
+  qrCodeData          String
+
+  pdfPath             String?
+
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+
+  @@index([serial])
+  @@index([studentId])
+  @@index([institutionId])
+}
+
+// Institution programs
+model InstitutionProgram {
+  id            String      @id @default(uuid())
+  institutionId String
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  programName   String
+  programType   String
+  description   String?
+  isActive      Boolean     @default(true)
+
+  approvedAt    DateTime    @default(now())
+  approvedBy    String?
+
+  @@unique([institutionId, programName])
+}
+
+// Program requests
+model ProgramRequest {
+  id             String      @id @default(uuid())
+  institutionId  String
+  institution    Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  programName    String
+  programType    String
+  description    String
+  supportingDocs String?
+
+  status         String      @default("PENDING")
+  adminComments  String?
+  decidedAt      DateTime?
+  decidedBy      String?
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+}
+
+// Profile change requests
+model ProfileChangeRequest {
+  id             String    @id @default(uuid())
+  studentId      String
+  student        Student   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  changes        String    @db.Text
+  supportingDocs String?
+  reason         String    @db.Text
+
+  status         String    @default("PENDING")
+  adminComments  String?   @db.Text
+  decidedAt      DateTime?
+  decidedBy      String?
+
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+}
+
+// Issue reports (tickets)
+model IssueReport {
+  id            String    @id @default(uuid())
+  ticketNumber  String    @unique
+
+  studentId     String?
+  student       Student?  @relation(fields: [studentId], references: [id])
+
+  reporterEmail String
+  reporterName  String
+
+  issueType     String
+  description   String    @db.Text
+  attachments   String?
+
+  status        String    @default("NEW")
+  adminResponse String?   @db.Text
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  resolvedAt    DateTime?
+}
+
+// Activity logs
+model ActivityLog {
+  id            String       @id @default(uuid())
+
+  actorId       String?
+  actorType     String
+  actorName     String
+
+  action        String
+  targetType    String?
+  targetId      String?
+
+  details       String?      @db.Text
+  ipAddress     String?
+
+  institutionId String?
+  institution   Institution? @relation(fields: [institutionId], references: [id])
+
+  createdAt     DateTime     @default(now())
+
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+// Admin accounts
+model Admin {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String   @default("System Administrator")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
