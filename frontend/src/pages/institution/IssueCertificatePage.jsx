@@ -42,12 +42,12 @@ export default function IssueCertificatePage() {
     registrationNumber: '',
     examinationYear: '',
     board: '',
-    group: '',
+    groupName: '',
     gpa: '',
     passingYear: '',
     diplomaSubject: '',
     duration: '',
-    session: '',
+    sessionName: '',
     program: '',
     department: '',
     major: '',
@@ -94,12 +94,12 @@ export default function IssueCertificatePage() {
         registrationNumber: '',
         examinationYear: '',
         board: '',
-        group: '',
+        groupName: '',
         gpa: '',
         passingYear: '',
         diplomaSubject: '',
         duration: '',
-        session: '',
+        sessionName: '',
         program: '',
         department: '',
         major: '',
@@ -139,7 +139,14 @@ export default function IssueCertificatePage() {
               </option>
             ))}
           </select>
-          <input className="input" name="rollNumber" placeholder="Roll number" value={form.rollNumber} onChange={handleChange} />
+          <input
+            className="input"
+            name="rollNumber"
+            placeholder="Roll number"
+            value={form.rollNumber}
+            onChange={handleChange}
+            required
+          />
           <input className="input" name="registrationNumber" placeholder="Registration number" value={form.registrationNumber} onChange={handleChange} />
           <input className="input" name="examinationYear" placeholder="Examination year" value={form.examinationYear} onChange={handleChange} />
           <select className="input" name="board" value={form.board} onChange={handleChange}>
@@ -150,12 +157,24 @@ export default function IssueCertificatePage() {
               </option>
             ))}
           </select>
-          <input className="input" name="group" placeholder="Group (Science/Arts/Commerce)" value={form.group} onChange={handleChange} />
+          <input
+            className="input"
+            name="groupName"
+            placeholder="Group (Science/Arts/Commerce)"
+            value={form.groupName}
+            onChange={handleChange}
+          />
           <input className="input" name="gpa" placeholder="GPA" value={form.gpa} onChange={handleChange} />
           <input className="input" name="passingYear" placeholder="Passing year" value={form.passingYear} onChange={handleChange} />
           <input className="input" name="diplomaSubject" placeholder="Diploma subject" value={form.diplomaSubject} onChange={handleChange} />
           <input className="input" name="duration" placeholder="Duration" value={form.duration} onChange={handleChange} />
-          <input className="input" name="session" placeholder="Session" value={form.session} onChange={handleChange} />
+          <input
+            className="input"
+            name="sessionName"
+            placeholder="Session"
+            value={form.sessionName}
+            onChange={handleChange}
+          />
           <input className="input" name="program" placeholder="Program" value={form.program} onChange={handleChange} />
           <input className="input" name="department" placeholder="Department" value={form.department} onChange={handleChange} />
           <input className="input" name="major" placeholder="Major" value={form.major} onChange={handleChange} />

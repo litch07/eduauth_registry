@@ -5,6 +5,7 @@ import api from '../../services/api.js';
 
 export default function VerificationPage() {
   const [serial, setSerial] = useState('');
+  const [rollNumber, setRollNumber] = useState('');
   const [qrInput, setQrInput] = useState('');
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
@@ -15,14 +16,17 @@ export default function VerificationPage() {
     setError('');
     setResult(null);
 
-    if (!serial.trim()) {
-      setError('Enter a serial number to verify.');
+    if (!serial.trim() || !rollNumber.trim()) {
+      setError('Enter both the serial number and roll number to verify.');
       return;
     }
 
     try {
       setLoading(true);
-      const response = await api.post('/verify/certificate', { serial: serial.trim() });
+      const response = await api.post('/verify/certificate', {
+        serial: serial.trim(),
+        rollNumber: rollNumber.trim(),
+      });
       setResult(response.data.certificate);
     } catch (err) {
       if (err.response?.status === 403) {
@@ -42,8 +46,12 @@ export default function VerificationPage() {
     try {
       const url = new URL(qrInput.trim());
       const serialParam = url.searchParams.get('serial');
+      const rollParam = url.searchParams.get('roll');
       if (serialParam) {
         setSerial(serialParam.toUpperCase());
+        if (rollParam) {
+          setRollNumber(rollParam.toUpperCase());
+        }
         setQrInput('');
         return;
       }
@@ -60,8 +68,8 @@ export default function VerificationPage() {
         <div className="space-y-6">
           <h1 className="text-3xl font-display font-semibold">Verify a Certificate</h1>
           <p className="text-sm text-slate-600">
-            Enter the 7-character serial number or scan a QR code from the certificate PDF. Verification results
-            appear instantly.
+            Enter the certificate serial and roll number, or scan the QR code from the certificate PDF.
+            Verification results appear instantly.
           </p>
           <form onSubmit={handleVerify} className="space-y-4">
             <input
@@ -69,6 +77,13 @@ export default function VerificationPage() {
               value={serial}
               onChange={(event) => setSerial(event.target.value)}
               placeholder="Serial No. e.g., A7K9M3X"
+              className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-primary focus:outline-none"
+            />
+            <input
+              type="text"
+              value={rollNumber}
+              onChange={(event) => setRollNumber(event.target.value)}
+              placeholder="Institution Roll Number"
               className="w-full rounded-xl border border-slate-200 px-4 py-3 text-sm focus:border-primary focus:outline-none"
             />
             <Button type="submit" disabled={loading} className="w-full">
@@ -98,6 +113,7 @@ export default function VerificationPage() {
                 variant="ghost"
                 onClick={() => {
                   setSerial('');
+                  setRollNumber('');
                   setError('');
                   setResult(null);
                 }}
@@ -119,6 +135,7 @@ export default function VerificationPage() {
               <div className="text-sm text-slate-600">
                 <p>Certificate: {result.certificateType}</p>
                 <p>Serial: {result.serial}</p>
+                <p>Roll: {result.rollNumber}</p>
                 <p>Institution: {result.institutionName}</p>
                 <p>Issued: {new Date(result.issueDate).toLocaleDateString()}</p>
               </div>

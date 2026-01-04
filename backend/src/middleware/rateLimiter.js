@@ -10,15 +10,17 @@ function createLimiter({ windowMs, max, message }) {
   });
 }
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 const loginLimiter = createLimiter({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: isProduction ? 5 : 100000,
   message: 'Too many login attempts, please try again later.',
 });
 
 const registrationLimiter = createLimiter({
   windowMs: 60 * 60 * 1000,
-  max: 3,
+  max: isProduction ? 3 : 50,
   message: 'Too many registrations, please try again later.',
 });
 

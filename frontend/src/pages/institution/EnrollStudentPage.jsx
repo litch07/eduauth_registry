@@ -11,7 +11,7 @@ export default function EnrollStudentPage() {
     studentInstitutionId: '',
     enrollmentDate: '',
     department: '',
-    class: '',
+    className: '',
     courseName: '',
   });
   const [message, setMessage] = useState('');
@@ -44,7 +44,7 @@ export default function EnrollStudentPage() {
       });
       setMessage('Student enrolled successfully.');
       setSelected(null);
-      setForm({ studentInstitutionId: '', enrollmentDate: '', department: '', class: '', courseName: '' });
+      setForm({ studentInstitutionId: '', enrollmentDate: '', department: '', className: '', courseName: '' });
     } catch (err) {
       setError(err.response?.data?.message || 'Enrollment failed.');
     }
@@ -95,7 +95,7 @@ export default function EnrollStudentPage() {
               <input className="input" placeholder="Institution Student ID" value={form.studentInstitutionId} onChange={(event) => setForm((prev) => ({ ...prev, studentInstitutionId: event.target.value }))} required />
               <input className="input" type="date" value={form.enrollmentDate} onChange={(event) => setForm((prev) => ({ ...prev, enrollmentDate: event.target.value }))} required />
               <input className="input" placeholder="Department (optional)" value={form.department} onChange={(event) => setForm((prev) => ({ ...prev, department: event.target.value }))} />
-              <input className="input" placeholder="Class (optional)" value={form.class} onChange={(event) => setForm((prev) => ({ ...prev, class: event.target.value }))} />
+              <input className="input" placeholder="Class (optional)" value={form.className} onChange={(event) => setForm((prev) => ({ ...prev, className: event.target.value }))} />
               <input className="input" placeholder="Course name (optional)" value={form.courseName} onChange={(event) => setForm((prev) => ({ ...prev, courseName: event.target.value }))} />
               <Button type="submit">Enroll Student</Button>
             </form>

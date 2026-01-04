@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import api from '../../services/api.js';
@@ -16,6 +16,7 @@ const institutionTypes = [
 const boards = ['COMILLA', 'DHAKA', 'DINAJPUR', 'JESSORE', 'MYMENSINGH', 'RAJSHAHI', 'SYLHET', 'MADRASAH', 'TECHNICAL'];
 
 export default function RegisterInstitutionPage() {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     name: '',
     email: '',
@@ -29,7 +30,6 @@ export default function RegisterInstitutionPage() {
     password: '',
     confirmPassword: '',
   });
-  const [signature, setSignature] = useState(null);
   const [status, setStatus] = useState({ message: '', error: '' });
   const [loading, setLoading] = useState(false);
 
@@ -58,12 +58,11 @@ export default function RegisterInstitutionPage() {
 
     const payload = new FormData();
     Object.entries(form).forEach(([key, value]) => payload.append(key, value));
-    if (signature) payload.append('authoritySignature', signature);
-
     try {
       setLoading(true);
       const response = await api.post('/auth/register/institution', payload);
       setStatus({ message: response.data.message, error: '' });
+      navigate(`/verify-email/pending?email=${encodeURIComponent(form.email)}`);
     } catch (err) {
       setStatus({ message: '', error: err.response?.data?.message || 'Registration failed.' });
     } finally {
@@ -105,10 +104,6 @@ export default function RegisterInstitutionPage() {
             <p className="text-xs text-slate-500 md:col-span-2">Password strength: {passwordStrength}</p>
           )}
           <input className="input" name="confirmPassword" type="password" placeholder="Confirm password" value={form.confirmPassword} onChange={handleChange} required />
-          <div className="md:col-span-2">
-            <label className="block text-xs font-semibold text-slate-600">Authority Signature (JPEG/PNG)</label>
-            <input type="file" onChange={(event) => setSignature(event.target.files[0])} required />
-          </div>
           {status.error && <p className="text-sm text-error md:col-span-2">{status.error}</p>}
           {status.message && <p className="text-sm text-success md:col-span-2">{status.message}</p>}
           <div className="md:col-span-2">

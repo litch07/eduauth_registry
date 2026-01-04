@@ -9,9 +9,7 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const { login } = useAuth();
   const [form, setForm] = useState({ email: '', password: '' });
-  const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState('');
-  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
 
   const handleChange = (event) => {
@@ -21,39 +19,29 @@ export default function LoginPage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
     setError('');
-    setInfo('');
 
     try {
       setLoading(true);
-      if (isAdmin) {
-        const response = await api.post('/admin/login', form);
-        login(response.data.token, { ...response.data.admin, role: 'ADMIN' });
-        navigate('/admin');
-      } else {
+      try {
         const response = await api.post('/auth/login', form);
         login(response.data.token, response.data.user);
         const role = response.data.user.role;
         navigate(role === 'STUDENT' ? '/student' : '/institution');
+        return;
+      } catch (err) {
+        if (err.response?.status !== 401) {
+          setError(err.response?.data?.message || 'Login failed.');
+          return;
+        }
       }
+
+      const adminResponse = await api.post('/admin/login', form);
+      login(adminResponse.data.token, { ...adminResponse.data.admin, role: 'ADMIN' });
+      navigate('/admin');
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed.');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const resendVerification = async () => {
-    setError('');
-    setInfo('');
-    if (!form.email) {
-      setError('Enter your email to resend verification.');
-      return;
-    }
-    try {
-      const response = await api.post('/auth/resend-verification', { email: form.email });
-      setInfo(response.data.message);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Resend failed.');
     }
   };
 
@@ -83,32 +71,15 @@ export default function LoginPage() {
             required
           />
           <div className="flex items-center justify-between text-xs text-slate-600">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={isAdmin}
-                onChange={(event) => setIsAdmin(event.target.checked)}
-              />
-              Admin login
-            </label>
+            <span>Admins can sign in here too.</span>
             <Link to="/forgot-password" className="text-primary hover:text-primary-hover">
               Forgot password?
             </Link>
           </div>
           {error && <p className="text-sm text-error">{error}</p>}
-          {info && <p className="text-sm text-success">{info}</p>}
           <Button type="submit" disabled={loading} className="w-full">
             {loading ? 'Signing in...' : 'Sign In'}
           </Button>
-          {!isAdmin && (
-            <button
-              type="button"
-              onClick={resendVerification}
-              className="text-xs font-semibold text-primary hover:text-primary-hover"
-            >
-              Resend verification email
-            </button>
-          )}
         </form>
 
         <div className="mt-6 text-sm text-slate-600">

@@ -184,6 +184,22 @@ function issueTicketConfirmationEmail({ ticketNumber, summary }) {
   });
 }
 
+function issueReportedEmail({ institutionName, reporterName, ticketNumber, issueType, description }) {
+  const content = `
+    <p>${institutionName || 'Institution'},</p>
+    <p>A student has submitted an issue report for your institution.</p>
+    <p><strong>Reporter:</strong> ${reporterName || 'Student'}</p>
+    <p><strong>Ticket Number:</strong> ${ticketNumber}</p>
+    <p><strong>Issue Type:</strong> ${issueType}</p>
+    <p><strong>Description:</strong> ${description}</p>
+  `;
+  return baseTemplate({
+    title: 'New Issue Report Submitted',
+    intro: 'A student submitted a support request.',
+    content,
+  });
+}
+
 function issueResponseEmail({ ticketNumber, response }) {
   const content = `
     <p>We have an update on your support request.</p>
@@ -236,6 +252,7 @@ module.exports = {
   passwordResetEmail,
   permissionRevokedEmail,
   issueTicketConfirmationEmail,
+  issueReportedEmail,
   issueResponseEmail,
   enrollmentApprovedEmail,
   enrollmentRejectedEmail,

@@ -53,6 +53,10 @@ export default function AdminReportsPage() {
               </div>
               <p className="text-xs text-slate-500">{report.reporterName} - {report.reporterEmail}</p>
               <p className="text-xs text-slate-500">Type: {report.issueType}</p>
+              <p className="text-xs text-slate-500">
+                Target: {report.targetType || 'ADMIN'}
+                {report.institutionName ? ` (${report.institutionName})` : ''}
+              </p>
               <p className="text-sm text-slate-600">{report.description}</p>
               <div className="flex flex-wrap gap-2">
                 <Button variant="secondary" onClick={() => updateStatus(report.id, 'IN_PROGRESS')}>In Progress</Button>

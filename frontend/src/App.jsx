@@ -13,6 +13,7 @@ import RegisterInstitutionPage from './pages/auth/RegisterInstitutionPage.jsx';
 import ForgotPasswordPage from './pages/auth/ForgotPasswordPage.jsx';
 import ResetPasswordPage from './pages/auth/ResetPasswordPage.jsx';
 import VerifyEmailPage from './pages/auth/VerifyEmailPage.jsx';
+import VerifyEmailNoticePage from './pages/auth/VerifyEmailNoticePage.jsx';
 
 import StudentDashboard from './pages/student/StudentDashboard.jsx';
 import StudentProfile from './pages/student/StudentProfile.jsx';
@@ -32,6 +33,8 @@ import AdminApprovalsPage from './pages/admin/AdminApprovalsPage.jsx';
 import AdminInstitutionsPage from './pages/admin/AdminInstitutionsPage.jsx';
 import AdminReportsPage from './pages/admin/AdminReportsPage.jsx';
 import AdminActivityLogsPage from './pages/admin/AdminActivityLogsPage.jsx';
+import AdminStudentsPage from './pages/admin/AdminStudentsPage.jsx';
+import AdminCertificatesPage from './pages/admin/AdminCertificatesPage.jsx';
 
 export default function App() {
   return (
@@ -48,6 +51,7 @@ export default function App() {
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/verify-email/pending" element={<VerifyEmailNoticePage />} />
 
           <Route
             path="/student"
@@ -160,6 +164,22 @@ export default function App() {
             element={
               <ProtectedRoute roles={['ADMIN']}>
                 <AdminInstitutionsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/students"
+            element={
+              <ProtectedRoute roles={['ADMIN']}>
+                <AdminStudentsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/admin/certificates"
+            element={
+              <ProtectedRoute roles={['ADMIN']}>
+                <AdminCertificatesPage />
               </ProtectedRoute>
             }
           />

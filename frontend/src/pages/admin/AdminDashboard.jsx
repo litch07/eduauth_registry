@@ -26,28 +26,34 @@ export default function AdminDashboard() {
 
       <div className="mt-6 grid gap-4 md:grid-cols-4">
         {[
-          ['Pending Students', data?.stats?.pendingStudents || 0],
-          ['Pending Institutions', data?.stats?.pendingInstitutions || 0],
-          ['Pending Profile Changes', data?.stats?.pendingProfileChanges || 0],
-          ['Pending Programs', data?.stats?.pendingPrograms || 0],
-        ].map(([label, value]) => (
-          <Card key={label}>
-            <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
-            <p className="mt-2 text-3xl font-display font-semibold text-primary">{value}</p>
-          </Card>
+          ['Pending Students', data?.stats?.pendingStudents || 0, '/admin/approvals'],
+          ['Pending Institutions', data?.stats?.pendingInstitutions || 0, '/admin/approvals'],
+          ['Pending Profile Changes', data?.stats?.pendingProfileChanges || 0, '/admin/approvals'],
+          ['Pending Programs', data?.stats?.pendingPrograms || 0, '/admin/approvals'],
+        ].map(([label, value, to]) => (
+          <Link key={label} to={to} className="block">
+            <Card>
+              <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
+              <p className="mt-2 text-3xl font-display font-semibold text-primary">{value}</p>
+              <p className="mt-2 text-xs text-slate-500">View details</p>
+            </Card>
+          </Link>
         ))}
       </div>
 
       <div className="mt-4 grid gap-4 md:grid-cols-3">
         {[
-          ['Total Students', data?.stats?.totalStudents || 0],
-          ['Total Institutions', data?.stats?.totalInstitutions || 0],
-          ['Total Certificates', data?.stats?.totalCertificates || 0],
-        ].map(([label, value]) => (
-          <Card key={label}>
-            <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
-            <p className="mt-2 text-3xl font-display font-semibold text-primary">{value}</p>
-          </Card>
+          ['Total Students', data?.stats?.totalStudents || 0, '/admin/students'],
+          ['Total Institutions', data?.stats?.totalInstitutions || 0, '/admin/institutions'],
+          ['Total Certificates', data?.stats?.totalCertificates || 0, '/admin/certificates'],
+        ].map(([label, value, to]) => (
+          <Link key={label} to={to} className="block">
+            <Card>
+              <p className="text-xs uppercase tracking-wide text-slate-400">{label}</p>
+              <p className="mt-2 text-3xl font-display font-semibold text-primary">{value}</p>
+              <p className="mt-2 text-xs text-slate-500">View records</p>
+            </Card>
+          </Link>
         ))}
       </div>
 
@@ -76,8 +82,14 @@ export default function AdminDashboard() {
             <Link to="/admin/approvals">
               <Button variant="secondary">Review Approvals</Button>
             </Link>
+            <Link to="/admin/students">
+              <Button variant="ghost">View Students</Button>
+            </Link>
             <Link to="/admin/institutions">
               <Button variant="ghost">Manage Institutions</Button>
+            </Link>
+            <Link to="/admin/certificates">
+              <Button variant="ghost">Search Certificates</Button>
             </Link>
             <Link to="/admin/reports">
               <Button variant="ghost">Issue Reports</Button>

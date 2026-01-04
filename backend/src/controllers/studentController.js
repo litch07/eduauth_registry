@@ -1,21 +1,54 @@
 const bcrypt = require('bcryptjs');
-const prisma = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
+const { query, execute } = require('../config/database');
 const { decryptIdentity } = require('../utils/encryption');
 const { isStrongPassword } = require('../utils/validators');
 const { sendEmail } = require('../utils/emailService');
 const {
   profileRequestReceivedEmail,
   issueTicketConfirmationEmail,
+  issueReportedEmail,
 } = require('../utils/emailTemplates');
 const { toPublicUploadPath, toAbsoluteUploadPath, safeUnlink } = require('../utils/fileUtils');
 const { validateFileType } = require('../utils/fileValidation');
 const { logActivity } = require('../utils/activityLogger');
 
+function mapInstitution(row) {
+  if (!row.institution_id) return null;
+  return {
+    id: row.institution_id,
+    name: row.institution_name,
+    type: row.institution_type,
+    phone: row.institution_phone,
+    address: row.institution_address,
+    eiin: row.institution_eiin,
+    registrationNumber: row.institution_registrationNumber,
+    board: row.institution_board,
+    authorityName: row.institution_authorityName,
+    authorityTitle: row.institution_authorityTitle,
+    authoritySignature: row.institution_authoritySignature,
+    canIssueCertificates: Boolean(row.institution_canIssueCertificates),
+  };
+}
+
 async function getStudentByUserId(userId) {
-  return prisma.student.findUnique({
-    where: { userId },
-    include: { user: true },
-  });
+  const rows = await query(
+    `SELECT s.*, u.email AS userEmail, u.status AS userStatus
+     FROM Student s
+     JOIN Users u ON s.userId = u.id
+     WHERE s.userId = ?
+     LIMIT 1`,
+    [userId]
+  );
+  if (!rows.length) return null;
+  const student = rows[0];
+  student.user = {
+    email: student.userEmail,
+    status: student.userStatus,
+  };
+  delete student.userEmail;
+  delete student.userStatus;
+  return student;
 }
 
 async function dashboard(req, res) {
@@ -24,35 +57,75 @@ async function dashboard(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const [enrollmentCount, certificateCount, pendingRequests] = await Promise.all([
-    prisma.enrollment.count({ where: { studentId: student.id } }),
-    prisma.certificate.count({ where: { studentId: student.id } }),
-    prisma.enrollmentRequest.count({ where: { studentId: student.id, status: 'PENDING' } }),
+  const [enrollmentCountRows, certificateCountRows, pendingRequestRows] = await Promise.all([
+    query('SELECT COUNT(*) AS count FROM Enrollment WHERE studentId = ?', [student.id]),
+    query('SELECT COUNT(*) AS count FROM Certificate WHERE studentId = ?', [student.id]),
+    query(
+      "SELECT COUNT(*) AS count FROM EnrollmentRequest WHERE studentId = ? AND status = 'PENDING'",
+      [student.id]
+    ),
   ]);
 
-  const enrollments = await prisma.enrollment.findMany({
-    where: { studentId: student.id },
-    include: { institution: true },
-    orderBy: { enrollmentDate: 'desc' },
-  });
+  const enrollmentsRows = await query(
+    `SELECT e.*, i.id AS institution_id, i.name AS institution_name, i.type AS institution_type,
+            i.phone AS institution_phone, i.address AS institution_address, i.eiin AS institution_eiin,
+            i.registrationNumber AS institution_registrationNumber, i.board AS institution_board,
+            i.authorityName AS institution_authorityName, i.authorityTitle AS institution_authorityTitle,
+            i.authoritySignature AS institution_authoritySignature, i.canIssueCertificates AS institution_canIssueCertificates
+     FROM Enrollment e
+     JOIN Institution i ON e.institutionId = i.id
+     WHERE e.studentId = ?
+     ORDER BY e.enrollmentDate DESC`,
+    [student.id]
+  );
 
-  const enrollmentRequests = await prisma.enrollmentRequest.findMany({
-    where: { studentId: student.id },
-    include: { institution: true },
-    orderBy: { createdAt: 'desc' },
-  });
+  const enrollmentRequestsRows = await query(
+    `SELECT er.*, i.id AS institution_id, i.name AS institution_name, i.type AS institution_type,
+            i.phone AS institution_phone, i.address AS institution_address, i.eiin AS institution_eiin,
+            i.registrationNumber AS institution_registrationNumber, i.board AS institution_board,
+            i.authorityName AS institution_authorityName, i.authorityTitle AS institution_authorityTitle,
+            i.authoritySignature AS institution_authoritySignature, i.canIssueCertificates AS institution_canIssueCertificates
+     FROM EnrollmentRequest er
+     JOIN Institution i ON er.institutionId = i.id
+     WHERE er.studentId = ?
+     ORDER BY er.createdAt DESC`,
+    [student.id]
+  );
 
-  const certificates = await prisma.certificate.findMany({
-    where: { studentId: student.id },
-    include: { institution: true },
-    orderBy: { issueDate: 'desc' },
-  });
+  const certificatesRows = await query(
+    `SELECT c.*, i.id AS institution_id, i.name AS institution_name, i.type AS institution_type,
+            i.phone AS institution_phone, i.address AS institution_address, i.eiin AS institution_eiin,
+            i.registrationNumber AS institution_registrationNumber, i.board AS institution_board,
+            i.authorityName AS institution_authorityName, i.authorityTitle AS institution_authorityTitle,
+            i.authoritySignature AS institution_authoritySignature, i.canIssueCertificates AS institution_canIssueCertificates
+     FROM Certificate c
+     JOIN Institution i ON c.institutionId = i.id
+     WHERE c.studentId = ?
+     ORDER BY c.issueDate DESC`,
+    [student.id]
+  );
+
+  const enrollments = enrollmentsRows.map((row) => ({
+    ...row,
+    institution: mapInstitution(row),
+  }));
+
+  const enrollmentRequests = enrollmentRequestsRows.map((row) => ({
+    ...row,
+    institution: mapInstitution(row),
+  }));
+
+  const certificates = certificatesRows.map((row) => ({
+    ...row,
+    isPubliclyShareable: Boolean(row.isPubliclyShareable),
+    institution: mapInstitution(row),
+  }));
 
   return res.json({
     stats: {
-      enrollments: enrollmentCount,
-      certificates: certificateCount,
-      pendingRequests,
+      enrollments: enrollmentCountRows[0]?.count || 0,
+      certificates: certificateCountRows[0]?.count || 0,
+      pendingRequests: pendingRequestRows[0]?.count || 0,
     },
     enrollments,
     enrollmentRequests,
@@ -113,10 +186,10 @@ async function updatePhoto(req, res) {
   const oldPath = toAbsoluteUploadPath(student.studentPhoto);
   safeUnlink(oldPath);
 
-  await prisma.student.update({
-    where: { id: student.id },
-    data: { studentPhoto: newPhotoPath },
-  });
+  await execute('UPDATE Student SET studentPhoto = ?, updatedAt = NOW() WHERE id = ?', [
+    newPhotoPath,
+    student.id,
+  ]);
 
   return res.json({ message: 'Photo updated successfully.', studentPhoto: newPhotoPath });
 }
@@ -132,10 +205,7 @@ async function updatePhone(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  await prisma.student.update({
-    where: { id: student.id },
-    data: { phone },
-  });
+  await execute('UPDATE Student SET phone = ?, updatedAt = NOW() WHERE id = ?', [phone, student.id]);
 
   return res.json({ message: 'Phone updated successfully.' });
 }
@@ -173,14 +243,19 @@ async function requestProfileUpdate(req, res) {
     docs.push(toPublicUploadPath(file.path));
   }
 
-  const request = await prisma.profileChangeRequest.create({
-    data: {
-      studentId: student.id,
-      changes: JSON.stringify(parsedChanges),
-      supportingDocs: docs.length ? JSON.stringify(docs) : null,
+  const requestId = uuidv4();
+  await execute(
+    `INSERT INTO ProfileChangeRequest
+      (id, studentId, changes, supportingDocs, reason, status, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
+    [
+      requestId,
+      student.id,
+      JSON.stringify(parsedChanges),
+      docs.length ? JSON.stringify(docs) : null,
       reason,
-    },
-  });
+    ]
+  );
 
   await sendEmail({
     to: student.user.email,
@@ -194,7 +269,7 @@ async function requestProfileUpdate(req, res) {
     actorName: `${student.firstName} ${student.lastName}`,
     action: 'PROFILE_CHANGE_REQUESTED',
     targetType: 'PROFILE_CHANGE_REQUEST',
-    targetId: request.id,
+    targetId: requestId,
     ipAddress: req.ip,
   });
 
@@ -207,10 +282,10 @@ async function getProfileRequests(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const requests = await prisma.profileChangeRequest.findMany({
-    where: { studentId: student.id },
-    orderBy: { createdAt: 'desc' },
-  });
+  const requests = await query(
+    'SELECT * FROM ProfileChangeRequest WHERE studentId = ? ORDER BY createdAt DESC',
+    [student.id]
+  );
 
   return res.json({ requests });
 }
@@ -221,11 +296,24 @@ async function getCertificates(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const certificates = await prisma.certificate.findMany({
-    where: { studentId: student.id },
-    include: { institution: true },
-    orderBy: { issueDate: 'desc' },
-  });
+  const certificatesRows = await query(
+    `SELECT c.*, i.id AS institution_id, i.name AS institution_name, i.type AS institution_type,
+            i.phone AS institution_phone, i.address AS institution_address, i.eiin AS institution_eiin,
+            i.registrationNumber AS institution_registrationNumber, i.board AS institution_board,
+            i.authorityName AS institution_authorityName, i.authorityTitle AS institution_authorityTitle,
+            i.authoritySignature AS institution_authoritySignature, i.canIssueCertificates AS institution_canIssueCertificates
+     FROM Certificate c
+     JOIN Institution i ON c.institutionId = i.id
+     WHERE c.studentId = ?
+     ORDER BY c.issueDate DESC`,
+    [student.id]
+  );
+
+  const certificates = certificatesRows.map((row) => ({
+    ...row,
+    isPubliclyShareable: Boolean(row.isPubliclyShareable),
+    institution: mapInstitution(row),
+  }));
 
   return res.json({ certificates });
 }
@@ -239,20 +327,26 @@ async function toggleCertificateSharing(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const certificate = await prisma.certificate.findFirst({
-    where: { id, studentId: student.id },
-  });
-
-  if (!certificate) {
+  const rows = await query(
+    'SELECT id FROM Certificate WHERE id = ? AND studentId = ? LIMIT 1',
+    [id, student.id]
+  );
+  if (!rows.length) {
     return res.status(404).json({ message: 'Certificate not found.' });
   }
 
-  const updated = await prisma.certificate.update({
-    where: { id: certificate.id },
-    data: { isPubliclyShareable: Boolean(isPubliclyShareable) },
-  });
+  await execute(
+    'UPDATE Certificate SET isPubliclyShareable = ?, updatedAt = NOW() WHERE id = ?',
+    [isPubliclyShareable ? 1 : 0, id]
+  );
 
-  return res.json({ message: 'Sharing preference updated.', certificate: updated });
+  const updatedRows = await query('SELECT * FROM Certificate WHERE id = ? LIMIT 1', [id]);
+  const updated = updatedRows[0];
+
+  return res.json({
+    message: 'Sharing preference updated.',
+    certificate: updated ? { ...updated, isPubliclyShareable: Boolean(updated.isPubliclyShareable) } : null,
+  });
 }
 
 async function changePassword(req, res) {
@@ -264,7 +358,8 @@ async function changePassword(req, res) {
     return res.status(400).json({ message: 'New password does not meet complexity requirements.' });
   }
 
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  const users = await query('SELECT password FROM Users WHERE id = ? LIMIT 1', [req.user.id]);
+  const user = users[0];
   if (!user) {
     return res.status(404).json({ message: 'User not found.' });
   }
@@ -275,16 +370,13 @@ async function changePassword(req, res) {
   }
 
   const hashedPassword = await bcrypt.hash(newPassword, 12);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { password: hashedPassword },
-  });
+  await execute('UPDATE Users SET password = ?, updatedAt = NOW() WHERE id = ?', [hashedPassword, req.user.id]);
 
   return res.json({ message: 'Password updated successfully.' });
 }
 
 async function reportIssue(req, res) {
-  const { issueType, description } = req.body;
+  const { issueType, description, targetType, institutionId } = req.body;
   if (!issueType || !description) {
     return res.status(400).json({ message: 'Issue type and description are required.' });
   }
@@ -292,6 +384,33 @@ async function reportIssue(req, res) {
   const student = await getStudentByUserId(req.user.id);
   if (!student) {
     return res.status(404).json({ message: 'Student profile not found.' });
+  }
+
+  const resolvedTarget = targetType === 'INSTITUTION' ? 'INSTITUTION' : 'ADMIN';
+  let targetInstitution = null;
+  if (resolvedTarget === 'INSTITUTION') {
+    if (!institutionId) {
+      return res.status(400).json({ message: 'Institution is required for this issue type.' });
+    }
+    const enrollmentRows = await query(
+      'SELECT id FROM Enrollment WHERE studentId = ? AND institutionId = ? LIMIT 1',
+      [student.id, institutionId]
+    );
+    if (!enrollmentRows.length) {
+      return res.status(400).json({ message: 'You are not enrolled in the selected institution.' });
+    }
+    const institutionRows = await query(
+      `SELECT i.id, i.name, u.email AS userEmail
+       FROM Institution i
+       JOIN Users u ON i.userId = u.id
+       WHERE i.id = ?
+       LIMIT 1`,
+      [institutionId]
+    );
+    targetInstitution = institutionRows[0];
+    if (!targetInstitution) {
+      return res.status(404).json({ message: 'Institution not found.' });
+    }
   }
 
   const dateStamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -306,23 +425,44 @@ async function reportIssue(req, res) {
     attachments.push(toPublicUploadPath(file.path));
   }
 
-  const report = await prisma.issueReport.create({
-    data: {
+  const reportId = uuidv4();
+  await execute(
+    `INSERT INTO IssueReport
+      (id, ticketNumber, studentId, reporterEmail, reporterName, issueType, description, attachments, status,
+       targetType, institutionId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'NEW', ?, ?, NOW(), NOW())`,
+    [
+      reportId,
       ticketNumber,
-      studentId: student.id,
-      reporterEmail: student.user.email,
-      reporterName: `${student.firstName} ${student.lastName}`,
+      student.id,
+      student.user.email,
+      `${student.firstName} ${student.lastName}`,
       issueType,
       description,
-      attachments: attachments.length ? JSON.stringify(attachments) : null,
-    },
-  });
+      attachments.length ? JSON.stringify(attachments) : null,
+      resolvedTarget,
+      targetInstitution ? targetInstitution.id : null,
+    ]
+  );
 
   await sendEmail({
     to: student.user.email,
     subject: `Support Ticket Created - ${ticketNumber}`,
     html: issueTicketConfirmationEmail({ ticketNumber, summary: issueType }),
   });
+  if (resolvedTarget === 'INSTITUTION' && targetInstitution) {
+    await sendEmail({
+      to: targetInstitution.userEmail,
+      subject: `New Student Issue Report - ${ticketNumber}`,
+      html: issueReportedEmail({
+        institutionName: targetInstitution.name,
+        reporterName: `${student.firstName} ${student.lastName}`,
+        ticketNumber,
+        issueType,
+        description,
+      }),
+    });
+  }
 
   await logActivity({
     actorId: student.userId,
@@ -330,8 +470,9 @@ async function reportIssue(req, res) {
     actorName: `${student.firstName} ${student.lastName}`,
     action: 'ISSUE_REPORTED',
     targetType: 'ISSUE_REPORT',
-    targetId: report.id,
+    targetId: reportId,
     ipAddress: req.ip,
+    institutionId: targetInstitution ? targetInstitution.id : null,
   });
 
   return res.status(201).json({ message: 'Issue reported successfully.', ticketNumber });
@@ -343,36 +484,40 @@ async function searchInstitutions(req, res) {
     return res.status(400).json({ message: 'Search term is required.' });
   }
 
-  const institutions = await prisma.institution.findMany({
-    where: {
-      user: { status: 'APPROVED' },
-      OR: [
-        { name: { contains: term, mode: 'insensitive' } },
-        { eiin: { contains: term, mode: 'insensitive' } },
-        { registrationNumber: { contains: term, mode: 'insensitive' } },
-      ],
+  const likeTerm = `%${term.toLowerCase()}%`;
+  const institutionsRows = await query(
+    `SELECT i.id, i.name, i.type, i.phone, i.address, i.eiin, i.registrationNumber, i.board,
+            i.authorityName, i.authorityTitle, i.authoritySignature,
+            u.email AS userEmail, u.status AS userStatus
+     FROM Institution i
+     JOIN Users u ON i.userId = u.id
+     WHERE u.status = 'APPROVED'
+       AND (
+         LOWER(i.name) LIKE ?
+         OR LOWER(COALESCE(i.eiin, '')) LIKE ?
+         OR LOWER(COALESCE(i.registrationNumber, '')) LIKE ?
+       )
+     LIMIT 20`,
+    [likeTerm, likeTerm, likeTerm]
+  );
+
+  const institutions = institutionsRows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    phone: row.phone,
+    address: row.address,
+    eiin: row.eiin,
+    registrationNumber: row.registrationNumber,
+    board: row.board,
+    authorityName: row.authorityName,
+    authorityTitle: row.authorityTitle,
+    authoritySignature: row.authoritySignature,
+    user: {
+      email: row.userEmail,
+      status: row.userStatus,
     },
-    select: {
-      id: true,
-      name: true,
-      type: true,
-      phone: true,
-      address: true,
-      eiin: true,
-      registrationNumber: true,
-      board: true,
-      authorityName: true,
-      authorityTitle: true,
-      authoritySignature: true,
-      user: {
-        select: {
-          email: true,
-          status: true,
-        },
-      },
-    },
-    take: 20,
-  });
+  }));
 
   return res.json({ institutions });
 }
@@ -383,7 +528,7 @@ async function createEnrollmentRequest(req, res) {
     studentInstitutionId,
     enrollmentDate,
     department,
-    class: className,
+    className,
     courseName,
   } = req.body;
 
@@ -396,18 +541,23 @@ async function createEnrollmentRequest(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const existing = await prisma.enrollmentRequest.findFirst({
-    where: { studentId: student.id, institutionId, status: 'PENDING' },
-  });
-  if (existing) {
+  const existing = await query(
+    "SELECT id FROM EnrollmentRequest WHERE studentId = ? AND institutionId = ? AND status = 'PENDING' LIMIT 1",
+    [student.id, institutionId]
+  );
+  if (existing.length) {
     return res.status(409).json({ message: 'A pending request already exists for this institution.' });
   }
 
-  const institution = await prisma.institution.findUnique({
-    where: { id: institutionId },
-    include: { user: true },
-  });
-  if (!institution || institution.user.status !== 'APPROVED') {
+  const institutions = await query(
+    `SELECT i.id, u.status
+     FROM Institution i
+     JOIN Users u ON i.userId = u.id
+     WHERE i.id = ?
+     LIMIT 1`,
+    [institutionId]
+  );
+  if (!institutions.length || institutions[0].status !== 'APPROVED') {
     return res.status(404).json({ message: 'Institution not found or not approved.' });
   }
 
@@ -420,18 +570,24 @@ async function createEnrollmentRequest(req, res) {
     docs.push(toPublicUploadPath(file.path));
   }
 
-  const request = await prisma.enrollmentRequest.create({
-    data: {
-      studentId: student.id,
+  const requestId = uuidv4();
+  await execute(
+    `INSERT INTO EnrollmentRequest
+      (id, studentId, institutionId, studentInstitutionId, enrollmentDate, department, className, courseName,
+       supportingDocs, status, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
+    [
+      requestId,
+      student.id,
       institutionId,
       studentInstitutionId,
-      enrollmentDate: new Date(enrollmentDate),
-      department: department || null,
-      class: className || null,
-      courseName: courseName || null,
-      supportingDocs: docs.length ? JSON.stringify(docs) : null,
-    },
-  });
+      new Date(enrollmentDate),
+      department || null,
+      className || null,
+      courseName || null,
+      docs.length ? JSON.stringify(docs) : null,
+    ]
+  );
 
   await logActivity({
     actorId: student.userId,
@@ -439,7 +595,7 @@ async function createEnrollmentRequest(req, res) {
     actorName: `${student.firstName} ${student.lastName}`,
     action: 'ENROLLMENT_REQUESTED',
     targetType: 'ENROLLMENT_REQUEST',
-    targetId: request.id,
+    targetId: requestId,
     institutionId,
     ipAddress: req.ip,
   });
@@ -453,11 +609,23 @@ async function listEnrollmentRequests(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const requests = await prisma.enrollmentRequest.findMany({
-    where: { studentId: student.id },
-    include: { institution: true },
-    orderBy: { createdAt: 'desc' },
-  });
+  const requestsRows = await query(
+    `SELECT er.*, i.id AS institution_id, i.name AS institution_name, i.type AS institution_type,
+            i.phone AS institution_phone, i.address AS institution_address, i.eiin AS institution_eiin,
+            i.registrationNumber AS institution_registrationNumber, i.board AS institution_board,
+            i.authorityName AS institution_authorityName, i.authorityTitle AS institution_authorityTitle,
+            i.authoritySignature AS institution_authoritySignature, i.canIssueCertificates AS institution_canIssueCertificates
+     FROM EnrollmentRequest er
+     JOIN Institution i ON er.institutionId = i.id
+     WHERE er.studentId = ?
+     ORDER BY er.createdAt DESC`,
+    [student.id]
+  );
+
+  const requests = requestsRows.map((row) => ({
+    ...row,
+    institution: mapInstitution(row),
+  }));
 
   return res.json({ requests });
 }
@@ -469,9 +637,11 @@ async function cancelEnrollmentRequest(req, res) {
     return res.status(404).json({ message: 'Student profile not found.' });
   }
 
-  const request = await prisma.enrollmentRequest.findFirst({
-    where: { id, studentId: student.id },
-  });
+  const rows = await query(
+    'SELECT id, status FROM EnrollmentRequest WHERE id = ? AND studentId = ? LIMIT 1',
+    [id, student.id]
+  );
+  const request = rows[0];
 
   if (!request) {
     return res.status(404).json({ message: 'Request not found.' });
@@ -481,7 +651,7 @@ async function cancelEnrollmentRequest(req, res) {
     return res.status(400).json({ message: 'Only pending requests can be cancelled.' });
   }
 
-  await prisma.enrollmentRequest.delete({ where: { id: request.id } });
+  await execute('DELETE FROM EnrollmentRequest WHERE id = ?', [request.id]);
 
   return res.json({ message: 'Enrollment request cancelled.' });
 }

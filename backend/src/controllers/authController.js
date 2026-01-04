@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const prisma = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
+const { query, execute, transaction } = require('../config/database');
 const { encryptIdentity } = require('../utils/encryption');
 const { isValidEmail, isStrongPassword, isValidNid, isValidBirthCert } = require('../utils/validators');
 const { generateToken } = require('../utils/tokens');
@@ -105,9 +106,13 @@ async function registerStudent(req, res) {
     return res.status(400).json({ message: 'Invalid photo file type.' });
   }
 
-  const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    return res.status(409).json({ message: 'Email already registered.' });
+  const existingUsers = await query('SELECT id, status, role FROM Users WHERE email = ? LIMIT 1', [email]);
+  if (existingUsers.length) {
+    const existing = existingUsers[0];
+    if (existing.status !== 'REJECTED' || existing.role !== 'STUDENT') {
+      return res.status(409).json({ message: 'Email already registered.' });
+    }
+    await execute('DELETE FROM Users WHERE id = ?', [existing.id]);
   }
 
   const parsedDob = new Date(dateOfBirth);
@@ -125,38 +130,45 @@ async function registerStudent(req, res) {
   const studentPhotoPath = toPublicUploadPath(photoFile.path);
   const identityDocPath = toPublicUploadPath(nidFile.path);
 
-  const created = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        role: 'STUDENT',
-        status: 'PENDING_VERIFICATION',
-        emailVerifyToken,
-        emailVerifyExpiry,
-      },
-    });
+  const created = await transaction(async (db) => {
+    const userId = uuidv4();
+    const studentId = uuidv4();
+    const publicStudentId = uuidv4();
 
-    const student = await tx.student.create({
-      data: {
-        userId: user.id,
+    await db.execute(
+      `INSERT INTO Users
+        (id, email, password, role, status, emailVerified, emailVerifyToken, emailVerifyExpiry, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'STUDENT', 'PENDING_VERIFICATION', 0, ?, ?, NOW(), NOW())`,
+      [userId, email, hashedPassword, emailVerifyToken, emailVerifyExpiry]
+    );
+
+    await db.execute(
+      `INSERT INTO Student
+        (id, userId, firstName, middleName, lastName, dateOfBirth, fatherName, motherName, identityType,
+         nidEncrypted, birthCertEncrypted, phone, presentAddress, nidOrBirthCertImage, studentPhoto, studentId,
+         createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+      [
+        studentId,
+        userId,
         firstName,
-        middleName: middleName || null,
+        middleName || null,
         lastName,
-        dateOfBirth: parsedDob,
+        parsedDob,
         fatherName,
         motherName,
-        identityType: resolvedIdentityType,
-        nidEncrypted: encryptedNid,
-        birthCertEncrypted: encryptedBirth,
+        resolvedIdentityType,
+        encryptedNid,
+        encryptedBirth,
         phone,
         presentAddress,
-        nidOrBirthCertImage: identityDocPath,
-        studentPhoto: studentPhotoPath,
-      },
-    });
+        identityDocPath,
+        studentPhotoPath,
+        publicStudentId,
+      ]
+    );
 
-    return { user, student };
+    return { userId, studentId };
   });
 
   const verifyUrl = `${process.env.FRONTEND_URL}/verify-email?token=${emailVerifyToken}`;
@@ -167,12 +179,12 @@ async function registerStudent(req, res) {
   });
 
   await logActivity({
-    actorId: created.user.id,
+    actorId: created.userId,
     actorType: 'STUDENT',
     actorName: `${firstName} ${lastName}`,
     action: 'REGISTRATION_SUBMITTED',
     targetType: 'STUDENT',
-    targetId: created.student.id,
+    targetId: created.studentId,
     ipAddress: req.ip,
   });
 
@@ -232,55 +244,60 @@ async function registerInstitution(req, res) {
   }
 
   const signatureFile = req.files && req.files.authoritySignature ? req.files.authoritySignature[0] : null;
-  if (!signatureFile) {
-    return res.status(400).json({ message: 'Authority signature is required.' });
-  }
-  if (!validateFileType(signatureFile.path, ['image/jpeg', 'image/png'])) {
+  if (signatureFile && !validateFileType(signatureFile.path, ['image/jpeg', 'image/png'])) {
     safeUnlink(signatureFile.path);
     return res.status(400).json({ message: 'Invalid signature file type.' });
   }
 
-  const existingUser = await prisma.user.findUnique({ where: { email } });
-  if (existingUser) {
-    return res.status(409).json({ message: 'Email already registered.' });
+  const existingUsers = await query('SELECT id, status, role FROM Users WHERE email = ? LIMIT 1', [email]);
+  if (existingUsers.length) {
+    const existing = existingUsers[0];
+    if (existing.status !== 'REJECTED' || existing.role !== 'INSTITUTION') {
+      return res.status(409).json({ message: 'Email already registered.' });
+    }
+    await execute('DELETE FROM Users WHERE id = ?', [existing.id]);
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);
   const emailVerifyToken = generateToken(32);
   const emailVerifyExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-  const authoritySignaturePath = toPublicUploadPath(signatureFile.path);
+  const authoritySignaturePath = signatureFile ? toPublicUploadPath(signatureFile.path) : null;
   const authorityTitle = getAuthorityTitle(type);
 
-  const created = await prisma.$transaction(async (tx) => {
-    const user = await tx.user.create({
-      data: {
-        email,
-        password: hashedPassword,
-        role: 'INSTITUTION',
-        status: 'PENDING_VERIFICATION',
-        emailVerifyToken,
-        emailVerifyExpiry,
-      },
-    });
+  const created = await transaction(async (db) => {
+    const userId = uuidv4();
+    const institutionId = uuidv4();
 
-    const institution = await tx.institution.create({
-      data: {
-        userId: user.id,
+    await db.execute(
+      `INSERT INTO Users
+        (id, email, password, role, status, emailVerified, emailVerifyToken, emailVerifyExpiry, createdAt, updatedAt)
+       VALUES (?, ?, ?, 'INSTITUTION', 'PENDING_VERIFICATION', 0, ?, ?, NOW(), NOW())`,
+      [userId, email, hashedPassword, emailVerifyToken, emailVerifyExpiry]
+    );
+
+    await db.execute(
+      `INSERT INTO Institution
+        (id, userId, name, type, phone, address, eiin, registrationNumber, board, authorityName, authorityTitle,
+         authoritySignature, canIssueCertificates, createdAt, updatedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NOW(), NOW())`,
+      [
+        institutionId,
+        userId,
         name,
         type,
         phone,
         address,
-        eiin: eiin || null,
-        registrationNumber: registrationNumber || null,
-        board: board || null,
+        eiin || null,
+        registrationNumber || null,
+        board || null,
         authorityName,
         authorityTitle,
-        authoritySignature: authoritySignaturePath,
-      },
-    });
+        authoritySignaturePath,
+      ]
+    );
 
-    return { user, institution };
+    return { userId, institutionId };
   });
 
   const verifyUrl = `${process.env.FRONTEND_URL}/verify-email?token=${emailVerifyToken}`;
@@ -291,12 +308,12 @@ async function registerInstitution(req, res) {
   });
 
   await logActivity({
-    actorId: created.user.id,
+    actorId: created.userId,
     actorType: 'INSTITUTION',
     actorName: name,
     action: 'REGISTRATION_SUBMITTED',
     targetType: 'INSTITUTION',
-    targetId: created.institution.id,
+    targetId: created.institutionId,
     ipAddress: req.ip,
   });
 
@@ -309,26 +326,26 @@ async function verifyEmail(req, res) {
     return res.status(400).json({ message: 'Token is required.' });
   }
 
-  const user = await prisma.user.findFirst({
-    where: {
-      emailVerifyToken: token,
-      emailVerifyExpiry: { gt: new Date() },
-    },
-  });
+  const rows = await query(
+    'SELECT id, role, email FROM Users WHERE emailVerifyToken = ? AND emailVerifyExpiry > NOW() LIMIT 1',
+    [token]
+  );
+  const user = rows[0];
 
   if (!user) {
     return res.status(400).json({ message: 'Invalid or expired token.' });
   }
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      emailVerified: true,
-      status: 'PENDING_APPROVAL',
-      emailVerifyToken: null,
-      emailVerifyExpiry: null,
-    },
-  });
+  await execute(
+    `UPDATE Users
+     SET emailVerified = 1,
+         status = 'PENDING_APPROVAL',
+         emailVerifyToken = NULL,
+         emailVerifyExpiry = NULL,
+         updatedAt = NOW()
+     WHERE id = ?`,
+    [user.id]
+  );
 
   await logActivity({
     actorId: user.id,
@@ -349,13 +366,18 @@ async function resendVerification(req, res) {
     return res.status(400).json({ message: 'Valid email is required.' });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email },
-    include: {
-      student: true,
-      institution: true,
-    },
-  });
+  const rows = await query(
+    `SELECT u.id, u.email, u.emailVerified, u.status,
+            s.firstName AS studentFirstName,
+            i.name AS institutionName
+     FROM Users u
+     LEFT JOIN Student s ON s.userId = u.id
+     LEFT JOIN Institution i ON i.userId = u.id
+     WHERE u.email = ?
+     LIMIT 1`,
+    [email]
+  );
+  const user = rows[0];
 
   if (!user || user.emailVerified || user.status !== 'PENDING_VERIFICATION') {
     return res.json({ message: 'If the email exists, a verification link has been sent.' });
@@ -364,15 +386,12 @@ async function resendVerification(req, res) {
   const emailVerifyToken = generateToken(32);
   const emailVerifyExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      emailVerifyToken,
-      emailVerifyExpiry,
-    },
-  });
+  await execute(
+    'UPDATE Users SET emailVerifyToken = ?, emailVerifyExpiry = ?, updatedAt = NOW() WHERE id = ?',
+    [emailVerifyToken, emailVerifyExpiry, user.id]
+  );
 
-  const name = user.student?.firstName || user.institution?.name || user.email;
+  const name = user.studentFirstName || user.institutionName || user.email;
   const verifyUrl = `${process.env.FRONTEND_URL}/verify-email?token=${emailVerifyToken}`;
 
   await sendEmail({
@@ -390,7 +409,8 @@ async function login(req, res) {
     return res.status(400).json({ message: 'Email and password are required.' });
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const users = await query('SELECT * FROM Users WHERE email = ? LIMIT 1', [email]);
+  const user = users[0];
   if (!user) {
     return res.status(401).json({ message: 'Invalid credentials.' });
   }
@@ -426,7 +446,8 @@ async function forgotPassword(req, res) {
     return res.status(400).json({ message: 'Email is required.' });
   }
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const users = await query('SELECT * FROM Users WHERE email = ? LIMIT 1', [email]);
+  const user = users[0];
   if (!user) {
     return res.json({ message: 'If the email exists, a reset link has been sent.' });
   }
@@ -434,10 +455,10 @@ async function forgotPassword(req, res) {
   const resetToken = generateToken(32);
   const resetTokenExpiry = new Date(Date.now() + 60 * 60 * 1000);
 
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { resetToken, resetTokenExpiry },
-  });
+  await execute(
+    'UPDATE Users SET resetToken = ?, resetTokenExpiry = ?, updatedAt = NOW() WHERE id = ?',
+    [resetToken, resetTokenExpiry, user.id]
+  );
 
   const resetUrl = `${process.env.FRONTEND_URL}/reset-password?token=${resetToken}`;
   await sendEmail({
@@ -458,26 +479,23 @@ async function resetPassword(req, res) {
     return res.status(400).json({ message: 'Password does not meet complexity requirements.' });
   }
 
-  const user = await prisma.user.findFirst({
-    where: {
-      resetToken: token,
-      resetTokenExpiry: { gt: new Date() },
-    },
-  });
+  const rows = await query(
+    'SELECT id FROM Users WHERE resetToken = ? AND resetTokenExpiry > NOW() LIMIT 1',
+    [token]
+  );
+  const user = rows[0];
 
   if (!user) {
     return res.status(400).json({ message: 'Invalid or expired token.' });
   }
 
   const hashedPassword = await bcrypt.hash(password, 12);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: {
-      password: hashedPassword,
-      resetToken: null,
-      resetTokenExpiry: null,
-    },
-  });
+  await execute(
+    `UPDATE Users
+     SET password = ?, resetToken = NULL, resetTokenExpiry = NULL, updatedAt = NOW()
+     WHERE id = ?`,
+    [hashedPassword, user.id]
+  );
 
   return res.json({ message: 'Password reset successfully.' });
 }

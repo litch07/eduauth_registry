@@ -1,5 +1,5 @@
 const jwt = require('jsonwebtoken');
-const prisma = require('../config/database');
+const { query } = require('../config/database');
 
 function getToken(req) {
   const header = req.headers.authorization;
@@ -28,7 +28,8 @@ async function requireApprovedUser(req, res, next) {
   if (!userId) {
     return res.status(401).json({ message: 'Authorization token required' });
   }
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const rows = await query('SELECT * FROM Users WHERE id = ? LIMIT 1', [userId]);
+  const user = rows[0];
   if (!user || user.status !== 'APPROVED') {
     return res.status(403).json({ message: 'Account is not approved' });
   }

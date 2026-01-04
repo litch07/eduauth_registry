@@ -1,5 +1,6 @@
 const bcrypt = require('bcryptjs');
-const prisma = require('../config/database');
+const { v4: uuidv4 } = require('uuid');
+const { query, execute } = require('../config/database');
 const { isStrongPassword } = require('../utils/validators');
 const { generateCertificateSerial } = require('../utils/serialGenerator');
 const { generateCertificatePdf } = require('../utils/pdfGenerator');
@@ -14,11 +15,46 @@ const { toPublicUploadPath, toAbsoluteUploadPath, safeUnlink } = require('../uti
 const { validateFileType } = require('../utils/fileValidation');
 const { logActivity } = require('../utils/activityLogger');
 
+function mapStudent(row) {
+  if (!row.student_id) return null;
+  const student = {
+    id: row.student_id,
+    firstName: row.student_firstName,
+    middleName: row.student_middleName,
+    lastName: row.student_lastName,
+    dateOfBirth: row.student_dateOfBirth,
+    studentId: row.student_studentId,
+    studentPhoto: row.student_studentPhoto,
+    phone: row.student_phone,
+    presentAddress: row.student_presentAddress,
+  };
+  if (row.student_email) {
+    student.user = {
+      email: row.student_email,
+      status: row.student_status,
+    };
+  }
+  return student;
+}
+
 async function getInstitutionByUserId(userId) {
-  return prisma.institution.findUnique({
-    where: { userId },
-    include: { user: true },
-  });
+  const rows = await query(
+    `SELECT i.*, u.email AS userEmail, u.status AS userStatus
+     FROM Institution i
+     JOIN Users u ON i.userId = u.id
+     WHERE i.userId = ?
+     LIMIT 1`,
+    [userId]
+  );
+  if (!rows.length) return null;
+  const institution = rows[0];
+  institution.user = {
+    email: institution.userEmail,
+    status: institution.userStatus,
+  };
+  delete institution.userEmail;
+  delete institution.userStatus;
+  return institution;
 }
 
 async function dashboard(req, res) {
@@ -27,26 +63,41 @@ async function dashboard(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const [studentCount, certificateCount, pendingRequests, programCount] = await Promise.all([
-    prisma.enrollment.count({ where: { institutionId: institution.id } }),
-    prisma.certificate.count({ where: { institutionId: institution.id } }),
-    prisma.enrollmentRequest.count({ where: { institutionId: institution.id, status: 'PENDING' } }),
-    prisma.institutionProgram.count({ where: { institutionId: institution.id, isActive: true } }),
+  const [studentCountRows, certificateCountRows, pendingRequestRows, programCountRows] = await Promise.all([
+    query('SELECT COUNT(*) AS count FROM Enrollment WHERE institutionId = ?', [institution.id]),
+    query('SELECT COUNT(*) AS count FROM Certificate WHERE institutionId = ?', [institution.id]),
+    query(
+      "SELECT COUNT(*) AS count FROM EnrollmentRequest WHERE institutionId = ? AND status = 'PENDING'",
+      [institution.id]
+    ),
+    query(
+      'SELECT COUNT(*) AS count FROM InstitutionProgram WHERE institutionId = ? AND isActive = 1',
+      [institution.id]
+    ),
   ]);
 
-  const recentCertificates = await prisma.certificate.findMany({
-    where: { institutionId: institution.id },
-    orderBy: { issueDate: 'desc' },
-    take: 10,
-    include: { student: true },
-  });
+  const recentRows = await query(
+    `SELECT c.*, s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+            s.lastName AS student_lastName
+     FROM Certificate c
+     JOIN Student s ON c.studentId = s.id
+     WHERE c.institutionId = ?
+     ORDER BY c.issueDate DESC
+     LIMIT 10`,
+    [institution.id]
+  );
+
+  const recentCertificates = recentRows.map((row) => ({
+    ...row,
+    student: mapStudent(row),
+  }));
 
   return res.json({
     stats: {
-      enrolledStudents: studentCount,
-      certificatesIssued: certificateCount,
-      pendingRequests,
-      activePrograms: programCount,
+      enrolledStudents: studentCountRows[0]?.count || 0,
+      certificatesIssued: certificateCountRows[0]?.count || 0,
+      pendingRequests: pendingRequestRows[0]?.count || 0,
+      activePrograms: programCountRows[0]?.count || 0,
     },
     recentCertificates,
   });
@@ -71,48 +122,64 @@ async function profile(req, res) {
     authorityName: institution.authorityName,
     authorityTitle: institution.authorityTitle,
     authoritySignature: institution.authoritySignature,
-    canIssueCertificates: institution.canIssueCertificates,
+    canIssueCertificates: Boolean(institution.canIssueCertificates),
   });
 }
 
 async function searchStudents(req, res) {
   const { email, firstName, lastName, dateOfBirth, studentId } = req.query;
 
-  const where = {
-    user: { status: 'APPROVED' },
-  };
+  let sql = '';
+  let params = [];
 
   if (email) {
-    where.user = { email: { contains: email, mode: 'insensitive' }, status: 'APPROVED' };
+    sql = `SELECT s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+                  s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+                  s.studentPhoto AS student_studentPhoto, u.email AS student_email, u.status AS student_status
+           FROM Student s
+           JOIN Users u ON s.userId = u.id
+           WHERE u.status = 'APPROVED' AND LOWER(u.email) LIKE ?
+           LIMIT 20`;
+    params = [`%${email.toLowerCase()}%`];
   } else if (studentId) {
-    where.studentId = { contains: studentId, mode: 'insensitive' };
+    sql = `SELECT s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+                  s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+                  s.studentPhoto AS student_studentPhoto, u.email AS student_email, u.status AS student_status
+           FROM Student s
+           JOIN Users u ON s.userId = u.id
+           WHERE u.status = 'APPROVED' AND LOWER(s.studentId) LIKE ?
+           LIMIT 20`;
+    params = [`%${studentId.toLowerCase()}%`];
   } else if (firstName && lastName && dateOfBirth) {
-    where.firstName = { contains: firstName, mode: 'insensitive' };
-    where.lastName = { contains: lastName, mode: 'insensitive' };
-    where.dateOfBirth = new Date(dateOfBirth);
+    sql = `SELECT s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+                  s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+                  s.studentPhoto AS student_studentPhoto, u.email AS student_email, u.status AS student_status
+           FROM Student s
+           JOIN Users u ON s.userId = u.id
+           WHERE u.status = 'APPROVED'
+             AND LOWER(s.firstName) LIKE ?
+             AND LOWER(s.lastName) LIKE ?
+             AND s.dateOfBirth = ?
+           LIMIT 20`;
+    params = [`%${firstName.toLowerCase()}%`, `%${lastName.toLowerCase()}%`, new Date(dateOfBirth)];
   } else {
     return res.status(400).json({ message: 'Provide email, student ID, or full name with DOB.' });
   }
 
-  const students = await prisma.student.findMany({
-    where,
-    select: {
-      id: true,
-      firstName: true,
-      middleName: true,
-      lastName: true,
-      dateOfBirth: true,
-      studentId: true,
-      studentPhoto: true,
-      user: {
-        select: {
-          email: true,
-          status: true,
-        },
-      },
+  const rows = await query(sql, params);
+  const students = rows.map((row) => ({
+    id: row.student_id,
+    firstName: row.student_firstName,
+    middleName: row.student_middleName,
+    lastName: row.student_lastName,
+    dateOfBirth: row.student_dateOfBirth,
+    studentId: row.student_studentId,
+    studentPhoto: row.student_studentPhoto,
+    user: {
+      email: row.student_email,
+      status: row.student_status,
     },
-    take: 20,
-  });
+  }));
 
   return res.json({ students });
 }
@@ -131,7 +198,7 @@ async function enrollStudent(req, res) {
     studentInstitutionId,
     enrollmentDate,
     department,
-    class: className,
+    className,
     courseName,
   } = req.body;
 
@@ -139,38 +206,50 @@ async function enrollStudent(req, res) {
     return res.status(400).json({ message: 'Student, institution ID, and enrollment date are required.' });
   }
 
-  const student = await prisma.student.findUnique({
-    where: { id: studentId },
-    include: { user: true },
-  });
-  if (!student || student.user.status !== 'APPROVED') {
+  const students = await query(
+    `SELECT s.id AS student_id, s.firstName AS student_firstName, s.lastName AS student_lastName,
+            u.email AS student_email, u.status AS student_status
+     FROM Student s
+     JOIN Users u ON s.userId = u.id
+     WHERE s.id = ?
+     LIMIT 1`,
+    [studentId]
+  );
+  const student = students[0];
+  if (!student || student.student_status !== 'APPROVED') {
     return res.status(404).json({ message: 'Student not found or not approved.' });
   }
 
-  const existing = await prisma.enrollment.findFirst({
-    where: { studentId: student.id, institutionId: institution.id },
-  });
-  if (existing) {
+  const existing = await query(
+    'SELECT id FROM Enrollment WHERE studentId = ? AND institutionId = ? LIMIT 1',
+    [studentId, institution.id]
+  );
+  if (existing.length) {
     return res.status(409).json({ message: 'Student already enrolled.' });
   }
 
-  const enrollment = await prisma.enrollment.create({
-    data: {
-      studentId: student.id,
-      institutionId: institution.id,
+  const enrollmentId = uuidv4();
+  await execute(
+    `INSERT INTO Enrollment
+      (id, studentId, institutionId, studentInstitutionId, enrollmentDate, department, className, courseName, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      enrollmentId,
+      studentId,
+      institution.id,
       studentInstitutionId,
-      enrollmentDate: new Date(enrollmentDate),
-      department: department || null,
-      class: className || null,
-      courseName: courseName || null,
-    },
-  });
+      new Date(enrollmentDate),
+      department || null,
+      className || null,
+      courseName || null,
+    ]
+  );
 
   await sendEmail({
-    to: student.user.email,
+    to: student.student_email,
     subject: 'Enrollment Confirmed - EduAuth Registry',
     html: enrollmentApprovedEmail({
-      studentName: `${student.firstName} ${student.lastName}`,
+      studentName: `${student.student_firstName} ${student.student_lastName}`,
       institutionName: institution.name,
     }),
   });
@@ -181,12 +260,24 @@ async function enrollStudent(req, res) {
     actorName: institution.name,
     action: 'ENROLLMENT_CREATED',
     targetType: 'ENROLLMENT',
-    targetId: enrollment.id,
+    targetId: enrollmentId,
     institutionId: institution.id,
     ipAddress: req.ip,
   });
 
-  return res.status(201).json({ message: 'Student enrolled successfully.', enrollment });
+  return res.status(201).json({
+    message: 'Student enrolled successfully.',
+    enrollment: {
+      id: enrollmentId,
+      studentId,
+      institutionId: institution.id,
+      studentInstitutionId,
+      enrollmentDate: new Date(enrollmentDate),
+      department: department || null,
+      className: className || null,
+      courseName: courseName || null,
+    },
+  });
 }
 
 async function listStudents(req, res) {
@@ -195,23 +286,21 @@ async function listStudents(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const enrollments = await prisma.enrollment.findMany({
-    where: { institutionId: institution.id },
-    include: {
-      student: {
-        select: {
-          id: true,
-          firstName: true,
-          middleName: true,
-          lastName: true,
-          dateOfBirth: true,
-          studentId: true,
-          studentPhoto: true,
-        },
-      },
-    },
-    orderBy: { enrollmentDate: 'desc' },
-  });
+  const rows = await query(
+    `SELECT e.*, s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+            s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+            s.studentPhoto AS student_studentPhoto
+     FROM Enrollment e
+     JOIN Student s ON e.studentId = s.id
+     WHERE e.institutionId = ?
+     ORDER BY e.enrollmentDate DESC`,
+    [institution.id]
+  );
+
+  const enrollments = rows.map((row) => ({
+    ...row,
+    student: mapStudent(row),
+  }));
 
   return res.json({ enrollments });
 }
@@ -223,32 +312,31 @@ async function getStudentDetails(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const enrollment = await prisma.enrollment.findFirst({
-    where: { studentId: id, institutionId: institution.id },
-    include: {
-      student: {
-        select: {
-          id: true,
-          firstName: true,
-          middleName: true,
-          lastName: true,
-          dateOfBirth: true,
-          studentId: true,
-          studentPhoto: true,
-          phone: true,
-          presentAddress: true,
-        },
-      },
-    },
-  });
-  if (!enrollment) {
+  const rows = await query(
+    `SELECT e.*, s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+            s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+            s.studentPhoto AS student_studentPhoto, s.phone AS student_phone, s.presentAddress AS student_presentAddress
+     FROM Enrollment e
+     JOIN Student s ON e.studentId = s.id
+     WHERE e.studentId = ? AND e.institutionId = ?
+     LIMIT 1`,
+    [id, institution.id]
+  );
+
+  const enrollmentRow = rows[0];
+  if (!enrollmentRow) {
     return res.status(404).json({ message: 'Student not enrolled.' });
   }
 
-  const certificates = await prisma.certificate.findMany({
-    where: { studentId: id, institutionId: institution.id },
-    orderBy: { issueDate: 'desc' },
-  });
+  const certificates = await query(
+    'SELECT * FROM Certificate WHERE studentId = ? AND institutionId = ? ORDER BY issueDate DESC',
+    [id, institution.id]
+  );
+
+  const enrollment = {
+    ...enrollmentRow,
+    student: mapStudent(enrollmentRow),
+  };
 
   return res.json({ enrollment, certificates });
 }
@@ -266,70 +354,128 @@ async function issueCertificate(req, res) {
   if (!studentId || !certificateType) {
     return res.status(400).json({ message: 'Student and certificate type are required.' });
   }
+  if (!details.rollNumber || !details.rollNumber.trim()) {
+    return res.status(400).json({ message: 'Roll number is required for verification.' });
+  }
 
-  const enrollment = await prisma.enrollment.findFirst({
-    where: { studentId, institutionId: institution.id },
-  });
+  const enrollmentRows = await query(
+    'SELECT * FROM Enrollment WHERE studentId = ? AND institutionId = ? LIMIT 1',
+    [studentId, institution.id]
+  );
+  const enrollment = enrollmentRows[0];
   if (!enrollment) {
     return res.status(400).json({ message: 'Student is not enrolled in this institution.' });
   }
 
-  const student = await prisma.student.findUnique({
-    where: { id: studentId },
-    include: { user: true },
-  });
+  const studentRows = await query(
+    `SELECT s.*, u.email AS userEmail
+     FROM Student s
+     JOIN Users u ON s.userId = u.id
+     WHERE s.id = ?
+     LIMIT 1`,
+    [studentId]
+  );
+  const student = studentRows[0];
   if (!student) {
     return res.status(404).json({ message: 'Student not found.' });
   }
+  student.user = { email: student.userEmail };
+  delete student.userEmail;
 
-  const { serial, sequenceNumber } = await generateCertificateSerial(prisma);
-  const qrCodeData = `${process.env.FRONTEND_URL}/verify?serial=${serial}`;
+  const { serial, sequenceNumber } = await generateCertificateSerial();
+  const normalizedRoll = details.rollNumber.trim().toUpperCase();
+  const qrCodeData = `${process.env.FRONTEND_URL}/verify?serial=${serial}&roll=${encodeURIComponent(normalizedRoll)}`;
+  const issueDate = new Date();
 
-  const certificate = await prisma.certificate.create({
-    data: {
-      serial,
-      sequenceNumber,
-      certificateType,
-      studentId,
-      institutionId: institution.id,
-      rollNumber: details.rollNumber || null,
-      registrationNumber: details.registrationNumber || null,
-      examinationYear: details.examinationYear ? Number(details.examinationYear) : null,
-      board: details.board || institution.board || null,
-      group: details.group || null,
-      gpa: details.gpa ? Number(details.gpa) : null,
-      passingYear: details.passingYear ? Number(details.passingYear) : null,
-      diplomaSubject: details.diplomaSubject || null,
-      duration: details.duration || null,
-      session: details.session || null,
-      program: details.program || null,
-      department: details.department || null,
-      major: details.major || null,
-      cgpa: details.cgpa ? Number(details.cgpa) : null,
-      degreeClass: details.degreeClass || null,
-      convocationDate: details.convocationDate ? new Date(details.convocationDate) : null,
-      completionDate: details.completionDate ? new Date(details.completionDate) : null,
-      skillName: details.skillName || null,
-      authorityName: institution.authorityName,
-      authorityTitle: institution.authorityTitle,
-      authoritySignature: institution.authoritySignature,
-      qrCodeData,
-    },
-  });
+  const certificateId = uuidv4();
+  const certificatePayload = {
+    id: certificateId,
+    serial,
+    sequenceNumber,
+    certificateType,
+    studentId,
+    institutionId: institution.id,
+    rollNumber: normalizedRoll,
+    registrationNumber: details.registrationNumber || null,
+    examinationYear: details.examinationYear ? Number(details.examinationYear) : null,
+    board: details.board || institution.board || null,
+    groupName: details.groupName || null,
+    gpa: details.gpa ? Number(details.gpa) : null,
+    passingYear: details.passingYear ? Number(details.passingYear) : null,
+    diplomaSubject: details.diplomaSubject || null,
+    duration: details.duration || null,
+    sessionName: details.sessionName || null,
+    program: details.program || null,
+    department: details.department || null,
+    major: details.major || null,
+    cgpa: details.cgpa ? Number(details.cgpa) : null,
+    degreeClass: details.degreeClass || null,
+    convocationDate: details.convocationDate ? new Date(details.convocationDate) : null,
+    completionDate: details.completionDate ? new Date(details.completionDate) : null,
+    skillName: details.skillName || null,
+    issueDate,
+    authorityName: institution.authorityName,
+    authorityTitle: institution.authorityTitle,
+    authoritySignature: institution.authoritySignature,
+    isPubliclyShareable: 1,
+    qrCodeData,
+    pdfPath: null,
+  };
+
+  await execute(
+    `INSERT INTO Certificate
+      (id, serial, sequenceNumber, certificateType, studentId, institutionId, rollNumber, registrationNumber,
+       examinationYear, board, groupName, gpa, passingYear, diplomaSubject, duration, sessionName, program, department,
+       major, cgpa, degreeClass, convocationDate, completionDate, skillName, issueDate, authorityName, authorityTitle,
+       authoritySignature, isPubliclyShareable, qrCodeData, pdfPath, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    [
+      certificatePayload.id,
+      certificatePayload.serial,
+      certificatePayload.sequenceNumber,
+      certificatePayload.certificateType,
+      certificatePayload.studentId,
+      certificatePayload.institutionId,
+      certificatePayload.rollNumber,
+      certificatePayload.registrationNumber,
+      certificatePayload.examinationYear,
+      certificatePayload.board,
+      certificatePayload.groupName,
+      certificatePayload.gpa,
+      certificatePayload.passingYear,
+      certificatePayload.diplomaSubject,
+      certificatePayload.duration,
+      certificatePayload.sessionName,
+      certificatePayload.program,
+      certificatePayload.department,
+      certificatePayload.major,
+      certificatePayload.cgpa,
+      certificatePayload.degreeClass,
+      certificatePayload.convocationDate,
+      certificatePayload.completionDate,
+      certificatePayload.skillName,
+      certificatePayload.issueDate,
+      certificatePayload.authorityName,
+      certificatePayload.authorityTitle,
+      certificatePayload.authoritySignature,
+      certificatePayload.isPubliclyShareable,
+      certificatePayload.qrCodeData,
+      certificatePayload.pdfPath,
+    ]
+  );
 
   const signatureAbsolute = toAbsoluteUploadPath(institution.authoritySignature);
   const pdfPath = await generateCertificatePdf({
-    certificate: { ...certificate, studentInstitutionId: enrollment.studentInstitutionId },
+    certificate: { ...certificatePayload, studentInstitutionId: enrollment.studentInstitutionId },
     student,
     institution: { ...institution, authoritySignature: signatureAbsolute },
   });
 
   const publicPdfPath = toPublicUploadPath(pdfPath);
-
-  const updatedCertificate = await prisma.certificate.update({
-    where: { id: certificate.id },
-    data: { pdfPath: publicPdfPath },
-  });
+  await execute('UPDATE Certificate SET pdfPath = ?, updatedAt = NOW() WHERE id = ?', [
+    publicPdfPath,
+    certificateId,
+  ]);
 
   await sendEmail({
     to: student.user.email,
@@ -348,13 +494,16 @@ async function issueCertificate(req, res) {
     actorName: institution.name,
     action: 'CERTIFICATE_ISSUED',
     targetType: 'CERTIFICATE',
-    targetId: certificate.id,
+    targetId: certificateId,
     institutionId: institution.id,
     ipAddress: req.ip,
     details: { serial },
   });
 
-  return res.status(201).json({ message: 'Certificate issued successfully.', certificate: updatedCertificate });
+  return res.status(201).json({
+    message: 'Certificate issued successfully.',
+    certificate: { ...certificatePayload, pdfPath: publicPdfPath, isPubliclyShareable: true },
+  });
 }
 
 async function getCertificates(req, res) {
@@ -363,13 +512,17 @@ async function getCertificates(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const certificates = await prisma.certificate.findMany({
-    where: { institutionId: institution.id },
-    include: { student: true },
-    orderBy: { issueDate: 'desc' },
-  });
+  const certificates = await query(
+    'SELECT * FROM Certificate WHERE institutionId = ? ORDER BY issueDate DESC',
+    [institution.id]
+  );
 
-  return res.json({ certificates });
+  const formatted = certificates.map((row) => ({
+    ...row,
+    isPubliclyShareable: Boolean(row.isPubliclyShareable),
+  }));
+
+  return res.json({ certificates: formatted });
 }
 
 async function requestProgram(req, res) {
@@ -392,15 +545,20 @@ async function requestProgram(req, res) {
     docs.push(toPublicUploadPath(file.path));
   }
 
-  const request = await prisma.programRequest.create({
-    data: {
-      institutionId: institution.id,
+  const requestId = uuidv4();
+  await execute(
+    `INSERT INTO ProgramRequest
+      (id, institutionId, programName, programType, description, supportingDocs, status, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, 'PENDING', NOW(), NOW())`,
+    [
+      requestId,
+      institution.id,
       programName,
       programType,
       description,
-      supportingDocs: docs.length ? JSON.stringify(docs) : null,
-    },
-  });
+      docs.length ? JSON.stringify(docs) : null,
+    ]
+  );
 
   await logActivity({
     actorId: institution.userId,
@@ -408,7 +566,7 @@ async function requestProgram(req, res) {
     actorName: institution.name,
     action: 'PROGRAM_REQUESTED',
     targetType: 'PROGRAM_REQUEST',
-    targetId: request.id,
+    targetId: requestId,
     institutionId: institution.id,
     ipAddress: req.ip,
   });
@@ -422,10 +580,10 @@ async function getPrograms(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const programs = await prisma.institutionProgram.findMany({
-    where: { institutionId: institution.id, isActive: true },
-    orderBy: { approvedAt: 'desc' },
-  });
+  const programs = await query(
+    'SELECT * FROM InstitutionProgram WHERE institutionId = ? AND isActive = 1 ORDER BY approvedAt DESC',
+    [institution.id]
+  );
 
   return res.json({ programs });
 }
@@ -439,7 +597,8 @@ async function changePassword(req, res) {
     return res.status(400).json({ message: 'New password does not meet complexity requirements.' });
   }
 
-  const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+  const users = await query('SELECT password FROM Users WHERE id = ? LIMIT 1', [req.user.id]);
+  const user = users[0];
   if (!user) {
     return res.status(404).json({ message: 'User not found.' });
   }
@@ -450,10 +609,7 @@ async function changePassword(req, res) {
   }
 
   const hashedPassword = await bcrypt.hash(newPassword, 12);
-  await prisma.user.update({
-    where: { id: user.id },
-    data: { password: hashedPassword },
-  });
+  await execute('UPDATE Users SET password = ?, updatedAt = NOW() WHERE id = ?', [hashedPassword, req.user.id]);
 
   return res.json({ message: 'Password updated successfully.' });
 }
@@ -481,16 +637,23 @@ async function reportIssue(req, res) {
     attachments.push(toPublicUploadPath(file.path));
   }
 
-  const report = await prisma.issueReport.create({
-    data: {
+  const reportId = uuidv4();
+  await execute(
+    `INSERT INTO IssueReport
+      (id, ticketNumber, reporterEmail, reporterName, issueType, description, attachments, status,
+       targetType, institutionId, createdAt, updatedAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'NEW', 'ADMIN', ?, NOW(), NOW())`,
+    [
+      reportId,
       ticketNumber,
-      reporterEmail: institution.user.email,
-      reporterName: institution.name,
+      institution.user.email,
+      institution.name,
       issueType,
       description,
-      attachments: attachments.length ? JSON.stringify(attachments) : null,
-    },
-  });
+      attachments.length ? JSON.stringify(attachments) : null,
+      institution.id,
+    ]
+  );
 
   await sendEmail({
     to: institution.user.email,
@@ -504,7 +667,7 @@ async function reportIssue(req, res) {
     actorName: institution.name,
     action: 'ISSUE_REPORTED',
     targetType: 'ISSUE_REPORT',
-    targetId: report.id,
+    targetId: reportId,
     institutionId: institution.id,
     ipAddress: req.ip,
   });
@@ -518,11 +681,22 @@ async function listEnrollmentRequests(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const requests = await prisma.enrollmentRequest.findMany({
-    where: { institutionId: institution.id, status: 'PENDING' },
-    include: { student: { include: { user: true } } },
-    orderBy: { createdAt: 'desc' },
-  });
+  const rows = await query(
+    `SELECT er.*, s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+            s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+            s.studentPhoto AS student_studentPhoto, u.email AS student_email, u.status AS student_status
+     FROM EnrollmentRequest er
+     JOIN Student s ON er.studentId = s.id
+     JOIN Users u ON s.userId = u.id
+     WHERE er.institutionId = ? AND er.status = 'PENDING'
+     ORDER BY er.createdAt DESC`,
+    [institution.id]
+  );
+
+  const requests = rows.map((row) => ({
+    ...row,
+    student: mapStudent(row),
+  }));
 
   return res.json({ requests });
 }
@@ -534,49 +708,61 @@ async function approveEnrollmentRequest(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const request = await prisma.enrollmentRequest.findFirst({
-    where: { id, institutionId: institution.id },
-    include: { student: { include: { user: true } } },
-  });
+  const rows = await query(
+    `SELECT er.*, s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+            s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+            s.studentPhoto AS student_studentPhoto, u.email AS student_email, u.status AS student_status
+     FROM EnrollmentRequest er
+     JOIN Student s ON er.studentId = s.id
+     JOIN Users u ON s.userId = u.id
+     WHERE er.id = ? AND er.institutionId = ?
+     LIMIT 1`,
+    [id, institution.id]
+  );
+  const request = rows[0];
 
   if (!request || request.status !== 'PENDING') {
     return res.status(404).json({ message: 'Request not found or already handled.' });
   }
 
-  const existing = await prisma.enrollment.findFirst({
-    where: { studentId: request.studentId, institutionId: institution.id },
-  });
-  if (existing) {
+  const existing = await query(
+    'SELECT id FROM Enrollment WHERE studentId = ? AND institutionId = ? LIMIT 1',
+    [request.studentId, institution.id]
+  );
+  if (existing.length) {
     return res.status(409).json({ message: 'Student already enrolled.' });
   }
 
-  const enrollment = await prisma.enrollment.create({
-    data: {
-      studentId: request.studentId,
-      institutionId: institution.id,
-      studentInstitutionId: request.studentInstitutionId,
-      enrollmentDate: request.enrollmentDate,
-      department: request.department,
-      class: request.class,
-      courseName: request.courseName,
-    },
-  });
+  const enrollmentId = uuidv4();
+  await execute(
+    `INSERT INTO Enrollment
+      (id, studentId, institutionId, studentInstitutionId, enrollmentDate, department, className, courseName, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      enrollmentId,
+      request.studentId,
+      institution.id,
+      request.studentInstitutionId,
+      request.enrollmentDate,
+      request.department,
+      request.className,
+      request.courseName,
+    ]
+  );
 
-  await prisma.enrollmentRequest.update({
-    where: { id: request.id },
-    data: {
-      status: 'APPROVED',
-      decidedAt: new Date(),
-      decidedBy: institution.userId,
-    },
-  });
+  await execute(
+    `UPDATE EnrollmentRequest
+     SET status = 'APPROVED', decidedAt = NOW(), decidedBy = ?, updatedAt = NOW()
+     WHERE id = ?`,
+    [institution.userId, request.id]
+  );
 
-  if (request.student && request.student.user) {
+  if (request.student_email) {
     await sendEmail({
-      to: request.student.user.email,
+      to: request.student_email,
       subject: 'Enrollment Confirmed - EduAuth Registry',
       html: enrollmentApprovedEmail({
-        studentName: `${request.student.firstName} ${request.student.lastName}`,
+        studentName: `${request.student_firstName} ${request.student_lastName}`,
         institutionName: institution.name,
       }),
     });
@@ -593,7 +779,19 @@ async function approveEnrollmentRequest(req, res) {
     ipAddress: req.ip,
   });
 
-  return res.json({ message: 'Enrollment request approved.', enrollment });
+  return res.json({
+    message: 'Enrollment request approved.',
+    enrollment: {
+      id: enrollmentId,
+      studentId: request.studentId,
+      institutionId: institution.id,
+      studentInstitutionId: request.studentInstitutionId,
+      enrollmentDate: request.enrollmentDate,
+      department: request.department,
+      className: request.className,
+      courseName: request.courseName,
+    },
+  });
 }
 
 async function rejectEnrollmentRequest(req, res) {
@@ -605,31 +803,36 @@ async function rejectEnrollmentRequest(req, res) {
     return res.status(404).json({ message: 'Institution profile not found.' });
   }
 
-  const request = await prisma.enrollmentRequest.findFirst({
-    where: { id, institutionId: institution.id },
-    include: { student: { include: { user: true } } },
-  });
+  const rows = await query(
+    `SELECT er.*, s.id AS student_id, s.firstName AS student_firstName, s.middleName AS student_middleName,
+            s.lastName AS student_lastName, s.dateOfBirth AS student_dateOfBirth, s.studentId AS student_studentId,
+            s.studentPhoto AS student_studentPhoto, u.email AS student_email, u.status AS student_status
+     FROM EnrollmentRequest er
+     JOIN Student s ON er.studentId = s.id
+     JOIN Users u ON s.userId = u.id
+     WHERE er.id = ? AND er.institutionId = ?
+     LIMIT 1`,
+    [id, institution.id]
+  );
+  const request = rows[0];
 
   if (!request || request.status !== 'PENDING') {
     return res.status(404).json({ message: 'Request not found or already handled.' });
   }
 
-  await prisma.enrollmentRequest.update({
-    where: { id: request.id },
-    data: {
-      status: 'REJECTED',
-      institutionComments: comments || null,
-      decidedAt: new Date(),
-      decidedBy: institution.userId,
-    },
-  });
+  await execute(
+    `UPDATE EnrollmentRequest
+     SET status = 'REJECTED', institutionComments = ?, decidedAt = NOW(), decidedBy = ?, updatedAt = NOW()
+     WHERE id = ?`,
+    [comments || null, institution.userId, request.id]
+  );
 
-  if (request.student && request.student.user) {
+  if (request.student_email) {
     await sendEmail({
-      to: request.student.user.email,
+      to: request.student_email,
       subject: 'Enrollment Request Update - EduAuth Registry',
       html: enrollmentRejectedEmail({
-        studentName: `${request.student.firstName} ${request.student.lastName}`,
+        studentName: `${request.student_firstName} ${request.student_lastName}`,
         institutionName: institution.name,
         reason: comments,
       }),
@@ -667,3 +870,4 @@ module.exports = {
   approveEnrollmentRequest,
   rejectEnrollmentRequest,
 };
+

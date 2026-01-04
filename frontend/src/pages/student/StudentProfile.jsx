@@ -14,6 +14,7 @@ const issueTypes = [
 export default function StudentProfile() {
   const [profile, setProfile] = useState(null);
   const [requests, setRequests] = useState([]);
+  const [enrollments, setEnrollments] = useState([]);
   const [phone, setPhone] = useState('');
   const [photo, setPhoto] = useState(null);
   const [message, setMessage] = useState('');
@@ -34,7 +35,12 @@ export default function StudentProfile() {
   const [supportingDocs, setSupportingDocs] = useState([]);
 
   const [passwordForm, setPasswordForm] = useState({ currentPassword: '', newPassword: '' });
-  const [issueForm, setIssueForm] = useState({ issueType: issueTypes[0], description: '' });
+  const [issueForm, setIssueForm] = useState({
+    issueType: issueTypes[0],
+    description: '',
+    targetType: 'ADMIN',
+    institutionId: '',
+  });
   const [issueFiles, setIssueFiles] = useState([]);
 
   const currentDob = useMemo(() => {
@@ -61,9 +67,19 @@ export default function StudentProfile() {
     }
   };
 
+  const loadEnrollments = async () => {
+    try {
+      const response = await api.get('/student/dashboard');
+      setEnrollments(response.data.enrollments || []);
+    } catch (err) {
+      setError(err.response?.data?.message || 'Failed to load enrollments.');
+    }
+  };
+
   useEffect(() => {
     loadProfile();
     loadRequests();
+    loadEnrollments();
   }, []);
 
   const handlePhoneUpdate = async (event) => {
@@ -178,16 +194,24 @@ export default function StudentProfile() {
       setError('Issue type and description are required.');
       return;
     }
+    if (issueForm.targetType === 'INSTITUTION' && !issueForm.institutionId) {
+      setError('Select an institution to report this issue.');
+      return;
+    }
 
     const payload = new FormData();
     payload.append('issueType', issueForm.issueType);
     payload.append('description', issueForm.description);
+    payload.append('targetType', issueForm.targetType);
+    if (issueForm.targetType === 'INSTITUTION') {
+      payload.append('institutionId', issueForm.institutionId);
+    }
     issueFiles.forEach((file) => payload.append('attachments', file));
 
     try {
       const response = await api.post('/student/report-issue', payload);
       setMessage(`Issue reported. Ticket: ${response.data.ticketNumber}`);
-      setIssueForm({ issueType: issueTypes[0], description: '' });
+      setIssueForm({ issueType: issueTypes[0], description: '', targetType: 'ADMIN', institutionId: '' });
       setIssueFiles([]);
     } catch (err) {
       setError(err.response?.data?.message || 'Issue report failed.');
@@ -309,6 +333,34 @@ export default function StudentProfile() {
         <Card>
           <h3 className="text-lg font-display font-semibold">Report an Issue</h3>
           <form onSubmit={handleIssueReport} className="mt-4 space-y-3">
+            <select
+              className="input"
+              value={issueForm.targetType}
+              onChange={(event) =>
+                setIssueForm((prev) => ({
+                  ...prev,
+                  targetType: event.target.value,
+                  institutionId: event.target.value === 'INSTITUTION' ? prev.institutionId : '',
+                }))
+              }
+            >
+              <option value="ADMIN">Report to Admin</option>
+              <option value="INSTITUTION">Report to Institution</option>
+            </select>
+            {issueForm.targetType === 'INSTITUTION' && (
+              <select
+                className="input"
+                value={issueForm.institutionId}
+                onChange={(event) => setIssueForm((prev) => ({ ...prev, institutionId: event.target.value }))}
+              >
+                <option value="">Select institution</option>
+                {enrollments.map((enrollment) => (
+                  <option key={enrollment.institution?.id} value={enrollment.institution?.id}>
+                    {enrollment.institution?.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <select
               className="input"
               value={issueForm.issueType}

@@ -12,7 +12,7 @@ Bangladesh's centralized digital trust platform for academic credentials. EduAut
 - Activity logs, program approvals, and issue reporting
 
 ## Tech Stack
-- Backend: Node.js, Express, Prisma (MySQL)
+- Backend: Node.js, Express, mysql2 (MySQL)
 - Frontend: React 18, Vite, Tailwind CSS
 - Security: JWT, Bcrypt, AES-256
 - Email: Nodemailer
@@ -25,7 +25,13 @@ Bangladesh's centralized digital trust platform for academic credentials. EduAut
 
 ## Setup
 
-### 1) Backend
+### 1) Database (phpMyAdmin)
+1. Start Apache + MySQL in XAMPP.
+2. Open phpMyAdmin: `http://localhost/phpmyadmin`.
+3. Create database `eduauth_registry` with collation `utf8mb4_unicode_ci`.
+4. Import `database.sql` (root of this repo) into the database.
+
+### 2) Backend
 ```bash
 cd backend
 npm install
@@ -33,10 +39,8 @@ npm install
 # Copy env template and fill values
 copy .env.example .env
 
-# Prisma
-npx prisma generate
-npx prisma migrate dev --name init
-npx prisma db seed
+# Seed admin account
+npm run seed
 
 # Start API
 npm run dev
@@ -44,7 +48,7 @@ npm run dev
 
 Backend runs at `http://localhost:5000`.
 
-### 2) Frontend
+### 3) Frontend
 ```bash
 cd frontend
 npm install
@@ -62,11 +66,17 @@ Frontend runs at `http://localhost:3000`.
 
 ### Backend (`backend/.env`)
 - `DATABASE_URL` (MySQL connection string)
+- Optional: `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` (used if `DATABASE_URL` is not set)
 - `JWT_SECRET`
 - `ENCRYPTION_KEY` (64 hex chars)
 - `ENCRYPTION_IV` (32 hex chars)
 - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM`
 - `FRONTEND_URL`, `BACKEND_URL`, `PORT`
+
+Example:
+```
+DATABASE_URL="mysql://root:@localhost:3306/eduauth_registry"
+```
 
 ### Frontend (`frontend/.env`)
 - `VITE_API_URL`

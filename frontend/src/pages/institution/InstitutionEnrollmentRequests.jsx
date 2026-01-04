@@ -51,7 +51,7 @@ export default function InstitutionEnrollmentRequests() {
                 <p className="text-sm font-semibold text-slate-800">{req.student?.firstName} {req.student?.lastName}</p>
                 <p className="text-xs text-slate-500">Student ID: {req.studentInstitutionId}</p>
                 {req.department && <p className="text-xs text-slate-500">Department: {req.department}</p>}
-                {req.class && <p className="text-xs text-slate-500">Class: {req.class}</p>}
+                {req.className && <p className="text-xs text-slate-500">Class: {req.className}</p>}
                 {req.courseName && <p className="text-xs text-slate-500">Course: {req.courseName}</p>}
                 <p className="text-xs text-slate-500">Requested: {new Date(req.createdAt).toLocaleDateString()}</p>
                 {parseDocs(req.supportingDocs).length ? (

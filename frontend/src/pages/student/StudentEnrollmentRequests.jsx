@@ -11,7 +11,7 @@ export default function StudentEnrollmentRequests() {
     studentInstitutionId: '',
     enrollmentDate: '',
     department: '',
-    class: '',
+    className: '',
     courseName: '',
   });
   const [supportingDocs, setSupportingDocs] = useState([]);
@@ -47,7 +47,7 @@ export default function StudentEnrollmentRequests() {
       await api.post('/student/enrollment-requests', payload);
       setMessage('Enrollment request submitted.');
       setSelected(null);
-      setRequestForm({ studentInstitutionId: '', enrollmentDate: '', department: '', class: '', courseName: '' });
+      setRequestForm({ studentInstitutionId: '', enrollmentDate: '', department: '', className: '', courseName: '' });
       setSupportingDocs([]);
       loadRequests();
     } catch (err) {
@@ -133,8 +133,8 @@ export default function StudentEnrollmentRequests() {
               <input
                 className="input"
                 placeholder="Class (optional)"
-                value={requestForm.class}
-                onChange={(event) => setRequestForm((prev) => ({ ...prev, class: event.target.value }))}
+                value={requestForm.className}
+                onChange={(event) => setRequestForm((prev) => ({ ...prev, className: event.target.value }))}
               />
               <input
                 className="input"

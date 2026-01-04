@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import api from '../../services/api.js';
 
 export default function RegisterStudentPage() {
+  const navigate = useNavigate();
   const [form, setForm] = useState({
     firstName: '',
     middleName: '',
@@ -44,6 +45,16 @@ export default function RegisterStudentPage() {
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
+  const handleIdentityTypeChange = (event) => {
+    const { value } = event.target;
+    setForm((prev) => ({
+      ...prev,
+      identityType: value,
+      nid: value === 'NID' ? prev.nid : '',
+      birthCert: value === 'BIRTH_CERTIFICATE' ? prev.birthCert : '',
+    }));
+  };
+
   const handleFileChange = (event) => {
     const { name, files: selected } = event.target;
     setFiles((prev) => ({ ...prev, [name]: selected[0] }));
@@ -62,6 +73,7 @@ export default function RegisterStudentPage() {
       setLoading(true);
       const response = await api.post('/auth/register/student', payload);
       setStatus({ message: response.data.message, error: '' });
+      navigate(`/verify-email/pending?email=${encodeURIComponent(form.email)}`);
     } catch (err) {
       setStatus({ message: '', error: err.response?.data?.message || 'Registration failed.' });
     } finally {
@@ -80,12 +92,29 @@ export default function RegisterStudentPage() {
           <input className="input" name="middleName" placeholder="Middle name (optional)" value={form.middleName} onChange={handleChange} />
           <input className="input" name="lastName" placeholder="Last name" value={form.lastName} onChange={handleChange} required />
           <input className="input" name="dateOfBirth" type="date" value={form.dateOfBirth} onChange={handleChange} required />
-          <select className="input" name="identityType" value={form.identityType} onChange={handleChange}>
+          <select className="input" name="identityType" value={form.identityType} onChange={handleIdentityTypeChange}>
             <option value="NID">NID</option>
             <option value="BIRTH_CERTIFICATE">Birth Certificate</option>
           </select>
-          <input className="input" name="nid" placeholder="NID (10/13 digits)" value={form.nid} onChange={handleChange} />
-          <input className="input" name="birthCert" placeholder="Birth Certificate (17 digits)" value={form.birthCert} onChange={handleChange} />
+          {form.identityType === 'NID' ? (
+            <input
+              className="input"
+              name="nid"
+              placeholder="NID (10/13 digits)"
+              value={form.nid}
+              onChange={handleChange}
+              required
+            />
+          ) : (
+            <input
+              className="input"
+              name="birthCert"
+              placeholder="Birth Certificate (17 digits)"
+              value={form.birthCert}
+              onChange={handleChange}
+              required
+            />
+          )}
           <input className="input" name="fatherName" placeholder="Father's name" value={form.fatherName} onChange={handleChange} required />
           <input className="input" name="motherName" placeholder="Mother's name" value={form.motherName} onChange={handleChange} required />
           <input className="input" name="email" placeholder="Email" value={form.email} onChange={handleChange} required />

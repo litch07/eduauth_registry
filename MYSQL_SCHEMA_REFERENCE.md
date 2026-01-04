@@ -241,11 +241,10 @@ DROP TABLE IF EXISTS Institution;
 DROP TABLE IF EXISTS Student;
 DROP TABLE IF EXISTS User;
 DROP TABLE IF EXISTS Admin;
-DROP TABLE IF EXISTS _prisma_migrations;
 
 SET FOREIGN_KEY_CHECKS = 1;
 
--- Then run: npx prisma migrate dev
+-- Then re-import database.sql in phpMyAdmin
 ```
 
 ### Check Database Size
@@ -457,7 +456,7 @@ HAVING COUNT(*) > 1;
 
 ## 💡 Performance Optimization
 
-### Add Indexes (Prisma does this automatically, but for reference)
+### Add Indexes (if needed)
 ```sql
 -- Email index (for fast user lookup)
 CREATE INDEX idx_user_email ON User(email);
@@ -492,20 +491,20 @@ SHOW PROFILE FOR QUERY 1;
 
 ## 📝 Notes for Developers
 
-1. **Always use Prisma** for database operations in code - don't write raw SQL
+1. **Use mysql2 parameterized queries** for database operations
 2. **Use phpMyAdmin** for quick checks and manual fixes only
 3. **Backup before migrations** - especially when making schema changes
 4. **Check foreign keys** - MySQL enforces them, so deletions must respect relationships
-5. **Use transactions** for multi-step operations (Prisma handles this)
+5. **Use transactions** for multi-step operations (mysql2 pool helpers)
 6. **Monitor database size** - especially the uploads and logs
-7. **Index frequently queried fields** - Prisma creates them based on @unique and @index
+7. **Index frequently queried fields** based on query patterns
 
 ---
 
 ## 🔗 Quick Access URLs
 
 - **phpMyAdmin:** http://localhost/phpmyadmin
-- **Prisma Studio:** http://localhost:5555 (run: `npx prisma studio`)
+- **phpMyAdmin:** http://localhost/phpmyadmin
 - **API Documentation:** http://localhost:5000/api (if you set up API docs)
 
 ---

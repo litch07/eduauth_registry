@@ -83,8 +83,36 @@ export default function AdminApprovalsPage() {
                   <div>
                     <p className="font-semibold text-slate-700">{item.student?.firstName} {item.student?.lastName}</p>
                     <p className="text-xs text-slate-500">{item.email}</p>
+                    {item.student?.studentId && (
+                      <p className="text-xs text-slate-500">Student ID: {item.student.studentId}</p>
+                    )}
+                    {item.student?.dateOfBirth && (
+                      <p className="text-xs text-slate-500">
+                        DOB: {new Date(item.student.dateOfBirth).toLocaleDateString()}
+                      </p>
+                    )}
+                    {item.student?.fatherName && (
+                      <p className="text-xs text-slate-500">Father: {item.student.fatherName}</p>
+                    )}
+                    {item.student?.motherName && (
+                      <p className="text-xs text-slate-500">Mother: {item.student.motherName}</p>
+                    )}
+                    {item.student?.phone && (
+                      <p className="text-xs text-slate-500">Phone: {item.student.phone}</p>
+                    )}
+                    {item.student?.presentAddress && (
+                      <p className="text-xs text-slate-500">Address: {item.student.presentAddress}</p>
+                    )}
+                    {item.student?.identityType && (
+                      <p className="text-xs text-slate-500">Identity Type: {item.student.identityType}</p>
+                    )}
                     {item.student?.identityNumber && (
                       <p className="text-xs text-slate-500">Identity: {item.student.identityNumber}</p>
+                    )}
+                    {item.student?.createdAt && (
+                      <p className="text-xs text-slate-500">
+                        Submitted: {new Date(item.student.createdAt).toLocaleDateString()}
+                      </p>
                     )}
                     {item.student?.nidOrBirthCertImage && (
                       <a
@@ -134,6 +162,31 @@ export default function AdminApprovalsPage() {
                   <div>
                     <p className="font-semibold text-slate-700">{item.institution?.name}</p>
                     <p className="text-xs text-slate-500">{item.email}</p>
+                    {item.institution?.type && (
+                      <p className="text-xs text-slate-500">Type: {item.institution.type}</p>
+                    )}
+                    {item.institution?.phone && (
+                      <p className="text-xs text-slate-500">Phone: {item.institution.phone}</p>
+                    )}
+                    {item.institution?.address && (
+                      <p className="text-xs text-slate-500">Address: {item.institution.address}</p>
+                    )}
+                    {item.institution?.eiin && (
+                      <p className="text-xs text-slate-500">EIIN: {item.institution.eiin}</p>
+                    )}
+                    {item.institution?.registrationNumber && (
+                      <p className="text-xs text-slate-500">
+                        Registration: {item.institution.registrationNumber}
+                      </p>
+                    )}
+                    {item.institution?.board && (
+                      <p className="text-xs text-slate-500">Board: {item.institution.board}</p>
+                    )}
+                    {item.institution?.authorityName && (
+                      <p className="text-xs text-slate-500">
+                        Authority: {item.institution.authorityName} ({item.institution.authorityTitle})
+                      </p>
+                    )}
                     {item.institution?.authoritySignature && (
                       <a
                         className="block text-xs text-primary hover:text-primary-hover"

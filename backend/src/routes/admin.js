@@ -2,6 +2,8 @@ const express = require('express');
 const {
   adminLogin,
   dashboard,
+  listStudents,
+  listCertificates,
   pendingStudents,
   approveStudent,
   rejectStudent,
@@ -32,6 +34,8 @@ router.post('/login', adminLogin);
 router.use(requireAdmin);
 
 router.get('/dashboard', dashboard);
+router.get('/students', listStudents);
+router.get('/certificates', listCertificates);
 router.get('/pending/students', pendingStudents);
 router.post('/pending/students/:id/approve', approveStudent);
 router.post('/pending/students/:id/reject', rejectStudent);

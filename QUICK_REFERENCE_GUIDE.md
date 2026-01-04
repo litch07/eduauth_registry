@@ -29,7 +29,7 @@
 ### 3. **Technology Stack - FINALIZED** ✅
 **Backend:**
 - Node.js + Express.js
-- PostgreSQL + Prisma ORM
+- MySQL + mysql2 (raw SQL)
 - JWT + Bcrypt for auth
 - Nodemailer for emails
 - QRCode + PDFKit for certificates
@@ -61,46 +61,17 @@ Full setup instructions included in main specification.
 
 ## 📦 Database Schema Changes
 
-### Prisma Configuration for MySQL:
-```prisma
-generator client {
-  provider = "prisma-client-js"
-}
+### Schema Import (MySQL)
+Use `database.sql` (repo root) to create tables via phpMyAdmin.
 
-datasource db {
-  provider = "mysql"
-  url      = env("DATABASE_URL")
-}
-```
+### MySQL Field Types (reference):
+- `BIGINT` for large integers (e.g., sequenceNumber)
+- `TEXT` for large text fields
+- `DATETIME` for timestamps
+- `DECIMAL(3, 2)` for GPA/CGPA
 
-### MySQL-Specific Field Types:
-- Use `@db.BigInt` for large integers (e.g., sequenceNumber)
-- Use `@db.Text` or `@db.LongText` for large text fields
-- DateTime works automatically
-- Decimal: `Decimal @db.Decimal(3, 2)` for GPA/CGPA
-
-### New Models Added:
-```prisma
-model EnrollmentRequest {
-  id                    String      @id @default(uuid())
-  studentId             String
-  institutionId         String
-  studentInstitutionId  String
-  enrollmentDate        DateTime
-  department            String?
-  class                 String?
-  courseName            String?
-  supportingDocs        String?     @db.Text
-  status                String      @default("PENDING")
-  institutionComments   String?
-  decidedAt             DateTime?
-  decidedBy             String?
-  createdAt             DateTime    @default(now())
-  updatedAt             DateTime    @updatedAt
-  
-  @@unique([studentId, institutionId, status])
-}
-```
+### Enrollment Requests
+Stored in `EnrollmentRequest` with a composite unique key on `(studentId, institutionId, status)`.
 
 ### Modified Models:
 **Student:**
@@ -118,22 +89,25 @@ model EnrollmentRequest {
 ### 1. Search Students (NO HASH MATCHING)
 ```javascript
 // Search by email (primary method)
-const students = await prisma.student.findMany({
-  where: {
-    user: { email: { contains: searchTerm, mode: 'insensitive' } },
-    user: { status: 'APPROVED' }
-  }
-});
+const students = await db.query(
+  `SELECT s.*, u.email
+   FROM Student s
+   JOIN User u ON s.userId = u.id
+   WHERE u.status = 'APPROVED' AND LOWER(u.email) LIKE ?`,
+  [`%${searchTerm.toLowerCase()}%`]
+);
 
 // OR search by name + DOB
-const students = await prisma.student.findMany({
-  where: {
-    firstName: { contains: firstName, mode: 'insensitive' },
-    lastName: { contains: lastName, mode: 'insensitive' },
-    dateOfBirth: dateOfBirth,
-    user: { status: 'APPROVED' }
-  }
-});
+const students = await db.query(
+  `SELECT s.*, u.email
+   FROM Student s
+   JOIN User u ON s.userId = u.id
+   WHERE u.status = 'APPROVED'
+     AND LOWER(s.firstName) LIKE ?
+     AND LOWER(s.lastName) LIKE ?
+     AND s.dateOfBirth = ?`,
+  [`%${firstName.toLowerCase()}%`, `%${lastName.toLowerCase()}%`, dateOfBirth]
+);
 ```
 
 ### 2. Encryption Functions (SIMPLIFIED)
@@ -162,22 +136,17 @@ function decryptIdentity(encryptedIdentity) {
 const encryptedNID = encryptIdentity(nid);
 const encryptedBirthCert = encryptIdentity(birthCert);
 
-await prisma.student.create({
-  data: {
-    identityType: primaryIdentityType,
-    nidEncrypted: encryptedNID,
-    birthCertEncrypted: encryptedBirthCert,
-    // ... other fields
-  }
-});
+await db.execute(
+  `INSERT INTO Student (id, userId, identityType, nidEncrypted, birthCertEncrypted, ...)
+   VALUES (?, ?, ?, ?, ?, ...)`,
+  [studentId, userId, primaryIdentityType, encryptedNID, encryptedBirthCert, ...]
+);
 ```
 
 ### 4. Display Identity (STUDENT PROFILE ONLY)
 ```javascript
 // In student profile
-const student = await prisma.student.findUnique({
-  where: { id: studentId }
-});
+const [student] = await db.query('SELECT * FROM Student WHERE id = ?', [studentId]);
 
 const displayIdentity = student.identityType === 'NID' 
   ? decryptIdentity(student.nidEncrypted)
@@ -204,16 +173,10 @@ const displayIdentity = student.identityType === 'NID'
 # Backend
 cd backend
 npm init -y
-npm install express @prisma/client prisma bcryptjs jsonwebtoken nodemailer cors helmet express-rate-limit multer uuid dotenv qrcode pdfkit
+npm install express mysql2 bcryptjs jsonwebtoken nodemailer cors helmet express-rate-limit multer uuid dotenv qrcode pdfkit
 npm install --save-dev nodemon prettier eslint
-npx prisma init
 mkdir -p src/{config,middleware,utils,routes,controllers} uploads/{students,institutions,certificates}
 
-# IMPORTANT: Update prisma/schema.prisma datasource to MySQL:
-# datasource db {
-#   provider = "mysql"
-#   url      = env("DATABASE_URL")
-# }
 
 # Frontend
 cd ../frontend
@@ -244,17 +207,10 @@ node -e "console.log('ENCRYPTION_IV=' + require('crypto').randomBytes(16).toStri
 ```bash
 cd backend
 
-# Generate Prisma client
-npx prisma generate
-
-# Create and run migrations
-npx prisma migrate dev --name init
+# Import database.sql in phpMyAdmin (eduauth_registry)
 
 # Seed admin account
-node prisma/seed.js
-
-# (Optional) Open Prisma Studio to view data
-npx prisma studio
+npm run seed
 ```
 
 ### Run Development:
@@ -267,9 +223,8 @@ npm run dev
 cd frontend
 npm run dev
 
-# Terminal 3 - Prisma Studio (optional)
-cd backend
-npx prisma studio
+# Terminal 3 - phpMyAdmin (optional)
+# Open http://localhost/phpmyadmin
 ```
 
 ---
@@ -279,17 +234,17 @@ npx prisma studio
 ### Phase 1: Foundation
 - [ ] Create project structure (backend + frontend folders)
 - [ ] Install all dependencies
-- [ ] Configure Prisma schema
+- [ ] Review `database.sql` schema
 - [ ] Set up .env files with generated keys
 - [ ] Create encryption utility functions (NO hash function)
 - [ ] Set up JWT middleware
 - [ ] Configure email service
 
 ### Phase 2: Database
-- [ ] Complete Prisma schema (with EnrollmentRequest model)
-- [ ] Run migrations: `npx prisma migrate dev`
+- [ ] Import `database.sql` in phpMyAdmin
+- [ ] Run `npm run seed`
 - [ ] Create seed script with admin account
-- [ ] Verify database in Prisma Studio
+- [ ] Verify tables in phpMyAdmin
 
 ### Phase 3: Backend API
 - [ ] Authentication routes (register, login, verify, reset)
@@ -396,15 +351,15 @@ npx prisma studio
 2. Verify in phpMyAdmin: http://localhost/phpmyadmin
 3. Select eduauth_registry database
 4. Check if tables exist
-5. If not, run: npx prisma migrate reset (WARNING: deletes data)
-6. Or manually: npx prisma migrate dev --name init
+5. If not, re-import `database.sql` (WARNING: deletes data)
+6. Or drop/recreate the database in phpMyAdmin
 ```
 
-### Issue: "Prisma Client validation error"
+### Issue: "Database schema mismatch"
 ```bash
 # Solution:
-1. Make sure datasource provider is "mysql" not "postgresql"
-2. Regenerate client: npx prisma generate
+1. Ensure `database.sql` matches the running database
+2. Re-import `database.sql` if tables are missing
 3. Check DATABASE_URL format is correct
 4. Restart your backend server
 ```
@@ -462,7 +417,7 @@ npx prisma studio
 **When Stuck:**
 1. Check the main specification document first
 2. Review this quick reference for simplified approach
-3. Use Prisma Studio to inspect database
+3. Use phpMyAdmin to inspect database
 4. Check console/network tab for errors
 5. Verify .env configuration
 
